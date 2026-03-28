@@ -2,10 +2,10 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
-    Name             = "Sovereign Hub  |  Rise of Nations",
+    Name             = "Raven Hub  |  Rise of Nations",
     Icon             = "crown",
-    LoadingTitle     = "Sovereign Hub",
-    LoadingSubtitle  = "Rise of Nations • v4.0",
+    LoadingTitle     = "Raven Hub",
+    LoadingSubtitle  = "Rise of Nations • v1.0",
     Theme            = "Default",
     ToggleUIKeybind  = "RightControl",
     DisableRayfieldPrompts  = false,
