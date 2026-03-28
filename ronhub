@@ -12,7 +12,7 @@ local Window = Rayfield:CreateWindow({
     DisableBuildWarnings    = false,
     ConfigurationSaving = {
         Enabled    = true,
-        FolderName = "SovereignHub",
+        FolderName = "RavenHub",
         FileName   = "RON_Config"
     },
     KeySystem = false,
@@ -1497,8 +1497,8 @@ end)
 
 -- ── Ready ────────────────────────────────────────────────────
 notify(
-    "Sovereign Hub Loaded ✓",
+    "Raven Hub Loaded ✓",
     ("v4.0  |  %d cities  |  Press RCtrl to toggle"):format(#getCities()),
     "crown"
 )
-log("Sovereign Hub v4.0 loaded for "..player.Name.." (".. (getCountry() or "?")..")")
+log("Raven Hub v4.0 loaded for "..player.Name.." (".. (getCountry() or "?")..")")
