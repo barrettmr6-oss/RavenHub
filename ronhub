@@ -1,9 +1,3 @@
--- ================================================================
---  RAVEN HUB  •  Rise of Nations  v6.0
---  UI: Rayfield Interface Suite | sirius.menu/rayfield
---  NEW: Tech Spy UI · Auto Construction · Auto Clear Alerts
--- ================================================================
-
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 local Window = Rayfield:CreateWindow({
