@@ -1,0 +1,2095 @@
+--[[
+╔═══════════════════════════════════════════════════╗
+║          RAVEN HUB  •  Rise of Nations            ║
+║                     v8.0                          ║
+║     UI: Rayfield Interface Suite (sirius.menu)    ║
+║     Toggle: RightControl                          ║
+╚═══════════════════════════════════════════════════╝
+--]]
+
+-- ══════════════════════════════════════════════════════════════
+--  STEP 1: SECURE MODE + LOAD RAYFIELD
+--  SecureMode must be set BEFORE loadstring runs
+-- ══════════════════════════════════════════════════════════════
+getgenv().SecureMode = true
+
+local Rayfield
+do
+    -- Primary: official sirius.menu CDN
+    local s, r = pcall(function()
+        return loadstring(game:HttpGet("https://sirius.menu/rayfield", true))()
+    end)
+    if s and r then
+        Rayfield = r
+    else
+        warn("[RAVEN] Primary Rayfield URL failed, trying mirror…")
+        -- Mirror: raw GitHub (always up-to-date official repo)
+        local s2, r2 = pcall(function()
+            return loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua", true
+            ))()
+        end)
+        if s2 and r2 then
+            Rayfield = r2
+        else
+            warn("[RAVEN] Both Rayfield sources failed. Error: " .. tostring(r2))
+            -- Show a basic error notification and exit
+            local sg = Instance.new("ScreenGui")
+            sg.Name = "RavenError"; sg.ResetOnSpawn = false
+            sg.Parent = game:GetService("Players").LocalPlayer.PlayerGui
+            local f = Instance.new("Frame", sg)
+            f.Size = UDim2.new(0,340,0,80)
+            f.Position = UDim2.new(0.5,-170,0.5,-40)
+            f.BackgroundColor3 = Color3.fromRGB(20,10,10)
+            f.BorderSizePixel = 0
+            Instance.new("UICorner", f).CornerRadius = UDim.new(0,10)
+            local l = Instance.new("TextLabel", f)
+            l.Size = UDim2.new(1,0,1,0); l.BackgroundTransparency = 1
+            l.Text = "❌  Raven Hub failed to load Rayfield.\nCheck your internet / executor HTTP perms."
+            l.TextColor3 = Color3.fromRGB(255,100,100)
+            l.Font = Enum.Font.GothamBold; l.TextSize = 13; l.TextWrapped = true
+            task.delay(8, function() sg:Destroy() end)
+            return
+        end
+    end
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  STEP 2: CREATE WINDOW
+-- ══════════════════════════════════════════════════════════════
+local Window = Rayfield:CreateWindow({
+    Name                   = "Raven Hub  •  Rise of Nations",
+    Icon                   = "bird",
+    LoadingTitle           = "Raven Hub",
+    LoadingSubtitle        = "Rise of Nations  •  v8.0",
+    ShowText               = "Raven Hub",
+    Theme                  = "Default",
+    ToggleUIKeybind        = "RightControl",
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings   = true,
+    ConfigurationSaving    = {
+        Enabled    = true,
+        FolderName = "RavenHub",
+        FileName   = "RavenHubConfig",
+    },
+    Discord = { Enabled = false, Invite = "", RememberJoins = false },
+    KeySystem  = false,
+})
+
+-- ══════════════════════════════════════════════════════════════
+--  STEP 3: SERVICES
+-- ══════════════════════════════════════════════════════════════
+local Players         = game:GetService("Players")
+local TweenService    = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local player          = Players.LocalPlayer
+local pGui            = player.PlayerGui
+
+-- ══════════════════════════════════════════════════════════════
+--  STEP 4: WAIT FOR GAME MANAGER
+-- ══════════════════════════════════════════════════════════════
+local gm = workspace:FindFirstChild("GameManager")
+if not gm then
+    for i = 1, 20 do
+        task.wait(0.5)
+        gm = workspace:FindFirstChild("GameManager")
+        if gm then break end
+    end
+end
+
+if not gm then
+    Rayfield:Notify({
+        Title   = "Not In Game",
+        Content = "Join a Rise of Nations server first, then run the script.",
+        Duration = 8,
+        Image   = "alert-circle",
+    })
+    return
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CORE UTILITIES
+-- ══════════════════════════════════════════════════════════════
+_G.RAVEN_ACTIVE = true
+local debugMode  = true
+
+local function dbg(msg)
+    if debugMode then warn("[RAVEN] " .. tostring(msg)) end
+end
+
+-- Number formatter
+local SFX = {"K","M","B","T","Qa","Qi","Sx","Sp","Oc","No","Dc"}
+local function fmt(n)
+    n = tonumber(n) or 0
+    for i = #SFX, 1, -1 do
+        local v = 10 ^ (i * 3)
+        if n >= v then return ("%.1f%s"):format(n / v, SFX[i]) end
+    end
+    return tostring(math.floor(n))
+end
+
+-- Safe child finder
+local function dig(obj, ...)
+    local cur = obj
+    for _, k in ipairs({...}) do
+        if not cur then return nil end
+        cur = cur:FindFirstChild(k)
+    end
+    return cur
+end
+
+-- Safe remote fire (never crashes the script)
+local function fire(remote, ...)
+    if not remote then return end
+    local args = {...}
+    pcall(function() remote:FireServer(table.unpack(args)) end)
+end
+
+-- Notification shortcut
+local function N(title, body, icon)
+    Rayfield:Notify({ Title = title, Content = body, Duration = 4, Image = icon or "info" })
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  GAME HELPERS
+-- ══════════════════════════════════════════════════════════════
+local function getCountry()
+    local ls = dig(player, "leaderstats")
+    local c  = ls and dig(ls, "Country")
+    return c and c.Value or nil
+end
+
+local function getCities()
+    local c = getCountry()
+    if not c then return {} end
+    local f = dig(workspace, "Baseplate", "Cities", c)
+    return f and f:GetChildren() or {}
+end
+
+local function hasB(city, name)
+    local bFolder = city:FindFirstChild("Buildings")
+    return bFolder ~= nil and bFolder:FindFirstChild(name) ~= nil
+end
+
+local function getRes(city)
+    local t = {}
+    local rFolder = city:FindFirstChild("Resources")
+    if rFolder then
+        for _, r in ipairs(rFolder:GetChildren()) do
+            t[r.Name] = r.Value
+        end
+    end
+    return t
+end
+
+local function allCountries()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player then
+            local ls = dig(p, "leaderstats")
+            if ls and dig(ls, "Country") then
+                t[#t + 1] = dig(ls, "Country").Value
+            end
+        end
+    end
+    return t
+end
+
+local function myUnits()
+    local t = {}
+    for _, u in ipairs(workspace.Units:GetChildren()) do
+        local o = dig(u, "Owner")
+        if o and o.Value == player.Name then t[#t + 1] = u end
+    end
+    return t
+end
+
+local function enemyCities()
+    local t, me = {}, getCountry()
+    if not me then return t end
+    local base = dig(workspace, "Baseplate", "Cities")
+    if not base then return t end
+    for _, folder in ipairs(base:GetChildren()) do
+        if folder.Name ~= me then
+            for _, city in ipairs(folder:GetChildren()) do
+                t[#t + 1] = city
+            end
+        end
+    end
+    return t
+end
+
+local function enemyUnits()
+    local t = {}
+    for _, u in ipairs(workspace.Units:GetChildren()) do
+        local o = dig(u, "Owner")
+        if o and o.Value ~= player.Name then t[#t + 1] = u end
+    end
+    return t
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  CONSTANTS
+-- ══════════════════════════════════════════════════════════════
+local ORE_SET = {
+    Oil=true,Copper=true,Diamond=true,Gold=true,Iron=true,
+    Phosphate=true,Tungsten=true,Uranium=true,Steel=true,
+    Titanium=true,Chromium=true,Aluminum=true
+}
+
+local UNIT_TYPES = {
+    "Infantry","Tank","Anti Aircraft","Artillery",
+    "Fighter","Attacker","Bomber",
+    "Destroyer","Frigate","Battleship","Aircraft Carrier","Submarine"
+}
+
+local UNIT_REQ = {
+    Fighter="Airport", Attacker="Airport", Bomber="Airport",
+    Destroyer="Port",  Frigate="Port",     Battleship="Port",
+    ["Aircraft Carrier"]="Port",           Submarine="Port"
+}
+
+local ALL_RES = {
+    "Oil","Copper","Diamond","Gold","Iron","Phosphate","Tungsten",
+    "Uranium","Steel","Titanium","Chromium","Aluminum",
+    "Electronics","Fertilizer","Food","Money","Coal","Consumer Goods"
+}
+
+local TECH_CATS = {
+    "Military","Economic","Industry","Naval",
+    "Air","Nuclear","Recon","Infrastructure"
+}
+
+local FACTORY_TYPES = {
+    "Factory","Arms Factory","Fertilizer Factory","Oil Refinery",
+    "Research Lab","Recruitment Center","Nuclear Plant",
+    "Shipyard","Airport","Port"
+}
+
+local SKIN_LIST = {
+    "Default","Roman Empire","British Empire","Soviet Union","USA",
+    "China","Japan","Ottoman Empire","French Empire","Mongol Empire",
+    "Viking","Pirate","Ninja","Zombie Nation"
+}
+
+local JUSTIF_TYPES = {"Conquest","Liberate","Puppet","Annex"}
+
+-- ══════════════════════════════════════════════════════════════
+--  STATE  (single source of truth, no globals scattered)
+-- ══════════════════════════════════════════════════════════════
+local S = {
+    -- building
+    minesMin = 1, selFactory = "Factory",
+    -- units
+    ubAmt = 10, ubType = "Infantry", ubDelay = 0.12, balCount = 5,
+    -- esp
+    espOn = false, espRate = 10, showEnemy = true,
+    -- alerts
+    autoClearAlerts = false,
+    -- diplo
+    selCountry = nil, warTarget = nil,
+    allyT = {}, puppetT = {},
+    justifType = "Conquest",
+    spamJustif = false,
+    -- trade
+    sellRes = "Oil",     sellAmt = 1000,
+    buyRes  = "Titanium",buyAmt  = 1000,
+    aiOnly  = true, cgTarget = "Both",
+    autoCGSell = false,
+    massBuyAI  = false, autoBuyType = "Titanium",
+    -- auto military
+    autoDeclare    = false,
+    autoAssign     = false,
+    autoBomber     = false,
+    autoAircraft   = false,
+    tgtAttacker    = 0, tgtFighter = 0, tgtBomber = 1,
+    antiBomber     = false,
+    warCrime       = false,
+    autoTankSpawn  = false, tankSpawnAmt = 5, tankSpawnInt = 30,
+    autoTankAtk    = false, tankAtkInt   = 15,
+    autoInfSpawn   = false, infSpawnAmt  = 5, infSpawnInt  = 30,
+    autoInfAtk     = false, infAtkInt    = 15,
+    -- auto construction
+    autoConst        = false,
+    autoConstFactory = "Factory",
+    autoConstQty     = 2,
+    -- auto timers
+    autoMine     = false, autoMineInt   = 60,
+    autoFactory  = false, autoFactInt   = 120,
+    autoUnit     = false, autoUnitInt   = 30, autoUnitType = "Infantry",
+    autoSell     = false, autoSellInt   = 45,
+    autoAlly     = false, autoPuppet    = false,
+    -- autofarm
+    autoFarm     = false, farmPhase = 0, farmStatus = "Inactive.",
+    -- tech
+    smartResearch = false, bestLaws = false,
+    selTech = "Military", selTax = "Maximum", selCons = "Total War",
+    selSkin = "Default",  techTarget = nil,
+    -- log
+    actionLog = {},
+}
+
+local function addLog(msg)
+    table.insert(S.actionLog, 1, os.date("%H:%M:%S") .. "  " .. msg)
+    if #S.actionLog > 60 then table.remove(S.actionLog) end
+    dbg(msg)
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  ESP SYSTEM
+-- ══════════════════════════════════════════════════════════════
+local TAG_ID = "RVN8_" .. tostring(math.random(10000,99999))
+
+local function buildTag()
+    local bb = Instance.new("BillboardGui")
+    bb.Name          = TAG_ID
+    bb.AlwaysOnTop   = true
+    bb.MaxDistance   = 800
+    bb.Size          = UDim2.new(0, 155, 0, 48)
+
+    local bg = Instance.new("Frame", bb)
+    bg.Size                   = UDim2.new(1, 0, 1, 0)
+    bg.BackgroundColor3       = Color3.fromRGB(9, 9, 18)
+    bg.BackgroundTransparency = 0.15
+    bg.BorderSizePixel        = 0
+    Instance.new("UICorner", bg).CornerRadius = UDim.new(0, 8)
+
+    local bar = Instance.new("Frame", bg)
+    bar.Size             = UDim2.new(0, 3, 1, 0)
+    bar.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    bar.BorderSizePixel  = 0
+    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 2)
+
+    local name = Instance.new("TextLabel", bg)
+    name.Name                 = "NameLbl"
+    name.Size                 = UDim2.new(1, -10, 0.55, 0)
+    name.Position             = UDim2.new(0, 9, 0, 3)
+    name.BackgroundTransparency = 1
+    name.Font                 = Enum.Font.GothamBold
+    name.TextSize             = 11
+    name.TextColor3           = Color3.fromRGB(255, 80, 80)
+    name.TextXAlignment       = Enum.TextXAlignment.Left
+    name.Text                 = "…"
+
+    local count = Instance.new("TextLabel", bg)
+    count.Name                = "CountLbl"
+    count.Size                = UDim2.new(1, -10, 0.38, 0)
+    count.Position            = UDim2.new(0, 9, 0.6, 0)
+    count.BackgroundTransparency = 1
+    count.Font                = Enum.Font.Code
+    count.TextSize            = 9
+    count.TextColor3          = Color3.fromRGB(150, 150, 150)
+    count.TextXAlignment      = Enum.TextXAlignment.Left
+    count.Text                = ""
+
+    return bb
+end
+
+local TAG_TEMPLATE = buildTag()
+
+local function applyTag(unit)
+    if unit:FindFirstChild(TAG_ID) then return end
+    local ut = dig(unit, "Type"); local uc = dig(unit, "Current"); local ow = dig(unit, "Owner")
+    if not (ut and uc and ow) then return end
+    local isOwn = (ow.Value == player.Name)
+    if not isOwn and not S.showEnemy then return end
+
+    local tag = TAG_TEMPLATE:Clone()
+    tag.Parent  = unit
+    tag.Adornee = unit
+
+    local nameLbl  = tag:FindFirstChild("NameLbl",  true)
+    local countLbl = tag:FindFirstChild("CountLbl", true)
+    local bar      = tag:FindFirstChildWhichIsA("Frame", true)
+
+    local colour = isOwn and Color3.fromRGB(80, 255, 130) or Color3.fromRGB(255, 80, 80)
+    if nameLbl  then nameLbl.Text       = ut.Value;                    nameLbl.TextColor3 = colour end
+    if countLbl then countLbl.Text      = fmt(uc.Value) .. " troops"                               end
+    if bar      then bar.BackgroundColor3 = colour                                                  end
+end
+
+local function refreshTag(unit)
+    local tag = unit:FindFirstChild(TAG_ID); if not tag then return end
+    local uc  = dig(unit, "Current")
+    local cl  = tag:FindFirstChild("CountLbl", true)
+    if uc and cl then cl.Text = fmt(uc.Value) .. " troops" end
+end
+
+local function clearAllTags()
+    for _, u in ipairs(workspace.Units:GetChildren()) do
+        local t = u:FindFirstChild(TAG_ID)
+        if t then t:Destroy() end
+    end
+end
+
+workspace.Units.ChildAdded:Connect(function(child)
+    if S.espOn then task.wait(0.5); applyTag(child) end
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  TECH SPY PANEL  (custom fullscreen ScreenGui)
+-- ══════════════════════════════════════════════════════════════
+local SpyGui = nil
+
+local SPY_CATS = {
+    { id = "Tank",         label = "Tank",         icon = "🛡️" },
+    { id = "Infantry",     label = "Infantry",     icon = "🪖" },
+    { id = "Air",          label = "Air",           icon = "✈️" },
+    { id = "Naval",        label = "Naval",         icon = "⚓" },
+    { id = "Nuclear",      label = "Nuclear",       icon = "☢️" },
+    { id = "Economic",     label = "Economic",      icon = "💰" },
+    { id = "Industry",     label = "Industry",      icon = "🏭" },
+    { id = "Recon",        label = "Recon",         icon = "🔍" },
+}
+
+local function getTech(p2, techId)
+    for _, folder in ipairs({"Technologies","Techs","Research"}) do
+        local tf = dig(p2, folder)
+        if tf then
+            local t = tf:FindFirstChild(techId)
+            if t then return tonumber(t.Value) or 0 end
+        end
+    end
+    return 0
+end
+
+local function openSpyPanel()
+    if SpyGui then SpyGui:Destroy(); SpyGui = nil end
+
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "RavenHub_Spy"; sg.ResetOnSpawn = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.DisplayOrder   = 999
+    sg.Parent         = pGui
+
+    -- dim
+    local dim = Instance.new("Frame", sg)
+    dim.Size = UDim2.new(1,0,1,0)
+    dim.BackgroundColor3 = Color3.fromRGB(0,0,0)
+    dim.BackgroundTransparency = 0.48
+    dim.BorderSizePixel = 0
+
+    -- panel
+    local win = Instance.new("Frame", sg)
+    win.AnchorPoint = Vector2.new(0.5, 0.5)
+    win.Size        = UDim2.new(0, 860, 0, 570)
+    win.Position    = UDim2.new(0.5, 0, 1.2, 0)   -- start off-screen
+    win.BackgroundColor3 = Color3.fromRGB(11, 11, 19)
+    win.BorderSizePixel  = 0
+    win.ClipsDescendants = true
+    Instance.new("UICorner", win).CornerRadius = UDim.new(0, 14)
+
+    -- drop shadow
+    local shadow = Instance.new("ImageLabel", win)
+    shadow.Size = UDim2.new(1, 30, 1, 30)
+    shadow.Position = UDim2.new(0, -15, 0, -15)
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://6014261993"
+    shadow.ImageColor3 = Color3.fromRGB(0,0,0)
+    shadow.ImageTransparency = 0.5
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(49, 49, 450, 450)
+    shadow.ZIndex = 0
+
+    -- gradient overlay
+    local grad = Instance.new("UIGradient", win)
+    grad.Rotation = 135
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(16, 16, 28)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(8,  8, 14)),
+    })
+
+    -- tween in
+    TweenService:Create(win,
+        TweenInfo.new(0.45, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
+        { Position = UDim2.new(0.5, 0, 0.5, 0) }
+    ):Play()
+
+    -- ── Header ──────────────────────────────────────────────
+    local hdr = Instance.new("Frame", win)
+    hdr.Size = UDim2.new(1, 0, 0, 54)
+    hdr.BackgroundColor3 = Color3.fromRGB(16, 16, 28)
+    hdr.BorderSizePixel  = 0
+    -- fix rounded only on bottom
+    local hdrFix = Instance.new("Frame", hdr)
+    hdrFix.Size = UDim2.new(1,0,0.5,0); hdrFix.Position = UDim2.new(0,0,0.5,0)
+    hdrFix.BackgroundColor3 = Color3.fromRGB(16,16,28); hdrFix.BorderSizePixel = 0
+
+    -- accent stripe
+    local stripe = Instance.new("Frame", hdr)
+    stripe.Size = UDim2.new(0, 3, 0, 32); stripe.Position = UDim2.new(0, 14, 0, 11)
+    stripe.BackgroundColor3 = Color3.fromRGB(90, 150, 255); stripe.BorderSizePixel = 0
+    Instance.new("UICorner", stripe).CornerRadius = UDim.new(1, 0)
+
+    local titleLbl = Instance.new("TextLabel", hdr)
+    titleLbl.Position = UDim2.new(0, 26, 0, 8)
+    titleLbl.Size     = UDim2.new(0.5, 0, 0, 22)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text     = "🔍  Tech War Spy"
+    titleLbl.TextColor3 = Color3.fromRGB(200, 220, 255)
+    titleLbl.Font = Enum.Font.GothamBold; titleLbl.TextSize = 16
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local subLbl = Instance.new("TextLabel", hdr)
+    subLbl.Position = UDim2.new(0, 26, 0, 32)
+    subLbl.Size     = UDim2.new(0.5, 0, 0, 14)
+    subLbl.BackgroundTransparency = 1
+    subLbl.Text     = "Raven Hub  •  Rise of Nations"
+    subLbl.TextColor3 = Color3.fromRGB(80, 105, 160)
+    subLbl.Font = Enum.Font.Gotham; subLbl.TextSize = 11
+    subLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local closeBtn = Instance.new("TextButton", hdr)
+    closeBtn.Size = UDim2.new(0, 36, 0, 36)
+    closeBtn.Position = UDim2.new(1, -48, 0.5, -18)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(180, 45, 45)
+    closeBtn.BorderSizePixel  = 0
+    closeBtn.Text = "✕"; closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    closeBtn.Font = Enum.Font.GothamBold; closeBtn.TextSize = 15
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
+
+    closeBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(win,
+            TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
+            { Position = UDim2.new(0.5, 0, 1.4, 0) }
+        ):Play()
+        task.delay(0.32, function()
+            if SpyGui then SpyGui:Destroy(); SpyGui = nil end
+        end)
+    end)
+
+    -- drag
+    local drag, dS, wS = false, nil, nil
+    hdr.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            drag = true; dS = i.Position; wS = win.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if drag and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - dS
+            win.Position = UDim2.new(wS.X.Scale, wS.X.Offset + d.X,
+                                     wS.Y.Scale, wS.Y.Offset + d.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then drag = false end
+    end)
+
+    -- ── Left panel: country list ─────────────────────────────
+    local left = Instance.new("Frame", win)
+    left.Size = UDim2.new(0, 255, 1, -54)
+    left.Position = UDim2.new(0, 0, 0, 54)
+    left.BackgroundColor3 = Color3.fromRGB(9, 9, 15)
+    left.BorderSizePixel  = 0
+
+    -- search bar
+    local sFrame = Instance.new("Frame", left)
+    sFrame.Size = UDim2.new(1, -16, 0, 40); sFrame.Position = UDim2.new(0, 8, 0, 10)
+    sFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 32); sFrame.BorderSizePixel = 0
+    Instance.new("UICorner", sFrame).CornerRadius = UDim.new(0, 10)
+
+    local sBox = Instance.new("TextBox", sFrame)
+    sBox.Size = UDim2.new(1, -40, 1, 0); sBox.Position = UDim2.new(0, 12, 0, 0)
+    sBox.BackgroundTransparency = 1; sBox.Text = ""
+    sBox.PlaceholderText = "Search country…"
+    sBox.PlaceholderColor3 = Color3.fromRGB(70, 80, 115)
+    sBox.TextColor3 = Color3.fromRGB(210, 220, 255)
+    sBox.Font = Enum.Font.Gotham; sBox.TextSize = 12
+    sBox.TextXAlignment = Enum.TextXAlignment.Left
+    sBox.ClearTextOnFocus = false
+
+    local sIcon = Instance.new("TextLabel", sFrame)
+    sIcon.Size = UDim2.new(0, 30, 1, 0); sIcon.Position = UDim2.new(1, -32, 0, 0)
+    sIcon.BackgroundTransparency = 1; sIcon.Text = "🔍"; sIcon.TextSize = 13
+
+    local scroll = Instance.new("ScrollingFrame", left)
+    scroll.Size = UDim2.new(1, 0, 1, -62); scroll.Position = UDim2.new(0, 0, 0, 58)
+    scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 3
+    scroll.ScrollBarImageColor3 = Color3.fromRGB(90, 150, 255)
+
+    local sLL = Instance.new("UIListLayout", scroll)
+    sLL.Padding = UDim.new(0, 4); sLL.SortOrder = Enum.SortOrder.LayoutOrder
+    local sLP = Instance.new("UIPadding", scroll)
+    sLP.PaddingLeft = UDim.new(0, 8); sLP.PaddingRight = UDim.new(0, 8); sLP.PaddingTop = UDim.new(0, 4)
+
+    -- ── Divider ──────────────────────────────────────────────
+    local divLine = Instance.new("Frame", win)
+    divLine.Size = UDim2.new(0, 1, 1, -60); divLine.Position = UDim2.new(0, 255, 0, 58)
+    divLine.BackgroundColor3 = Color3.fromRGB(25, 25, 44); divLine.BorderSizePixel = 0
+
+    -- ── Right panel ──────────────────────────────────────────
+    local right = Instance.new("Frame", win)
+    right.Size = UDim2.new(1, -258, 1, -54); right.Position = UDim2.new(0, 258, 0, 54)
+    right.BackgroundTransparency = 1; right.BorderSizePixel = 0
+
+    -- country header card
+    local cHdr = Instance.new("Frame", right)
+    cHdr.Size = UDim2.new(1, -12, 0, 60); cHdr.Position = UDim2.new(0, 6, 0, 8)
+    cHdr.BackgroundColor3 = Color3.fromRGB(17, 20, 40); cHdr.BorderSizePixel = 0
+    Instance.new("UICorner", cHdr).CornerRadius = UDim.new(0, 12)
+
+    local cFlag = Instance.new("TextLabel", cHdr)
+    cFlag.Size = UDim2.new(0, 46, 1, 0); cFlag.Position = UDim2.new(0, 12, 0, 0)
+    cFlag.BackgroundTransparency = 1; cFlag.Text = "🌍"; cFlag.TextSize = 28
+
+    local cName = Instance.new("TextLabel", cHdr)
+    cName.Position = UDim2.new(0, 62, 0, 9); cName.Size = UDim2.new(1, -74, 0, 26)
+    cName.BackgroundTransparency = 1; cName.Text = "Select a country"
+    cName.TextColor3 = Color3.fromRGB(220, 232, 255)
+    cName.Font = Enum.Font.GothamBold; cName.TextSize = 18
+    cName.TextXAlignment = Enum.TextXAlignment.Left
+
+    local cSub = Instance.new("TextLabel", cHdr)
+    cSub.Position = UDim2.new(0, 62, 0, 38); cSub.Size = UDim2.new(1, -74, 0, 16)
+    cSub.BackgroundTransparency = 1; cSub.Text = "Click any country to begin analysis"
+    cSub.TextColor3 = Color3.fromRGB(80, 105, 165)
+    cSub.Font = Enum.Font.Gotham; cSub.TextSize = 11
+    cSub.TextXAlignment = Enum.TextXAlignment.Left
+
+    -- tab row
+    local tabRow = Instance.new("Frame", right)
+    tabRow.Size = UDim2.new(1, -12, 0, 36); tabRow.Position = UDim2.new(0, 6, 0, 76)
+    tabRow.BackgroundTransparency = 1
+    local tabRL = Instance.new("UIListLayout", tabRow)
+    tabRL.FillDirection = Enum.FillDirection.Horizontal; tabRL.Padding = UDim.new(0, 5)
+
+    -- content scroll
+    local cScroll = Instance.new("ScrollingFrame", right)
+    cScroll.Size = UDim2.new(1, -12, 1, -126); cScroll.Position = UDim2.new(0, 6, 0, 122)
+    cScroll.BackgroundTransparency = 1; cScroll.BorderSizePixel = 0
+    cScroll.ScrollBarThickness = 3
+    cScroll.ScrollBarImageColor3 = Color3.fromRGB(90, 150, 255)
+    cScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+    local cLL = Instance.new("UIListLayout", cScroll)
+    cLL.Padding = UDim.new(0, 5); cLL.SortOrder = Enum.SortOrder.LayoutOrder
+    Instance.new("UIPadding", cScroll).PaddingBottom = UDim.new(0, 10)
+
+    -- row builder
+    local function mkRow(parent, leftTxt, rightTxt, rCol, order)
+        rCol = rCol or Color3.fromRGB(200, 200, 200)
+        local row = Instance.new("Frame", parent)
+        row.Size = UDim2.new(1, 0, 0, 42)
+        row.BackgroundColor3 = Color3.fromRGB(16, 16, 28)
+        row.BorderSizePixel = 0; row.LayoutOrder = order or 0
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 9)
+
+        -- left accent bar
+        local accentBar = Instance.new("Frame", row)
+        accentBar.Size = UDim2.new(0, 3, 0.6, 0); accentBar.Position = UDim2.new(0, 0, 0.2, 0)
+        accentBar.BackgroundColor3 = rCol; accentBar.BorderSizePixel = 0
+        Instance.new("UICorner", accentBar).CornerRadius = UDim.new(1, 0)
+
+        local lLbl = Instance.new("TextLabel", row)
+        lLbl.Size = UDim2.new(0.6, 0, 1, 0); lLbl.Position = UDim2.new(0, 14, 0, 0)
+        lLbl.BackgroundTransparency = 1; lLbl.Text = leftTxt
+        lLbl.TextColor3 = Color3.fromRGB(175, 190, 220)
+        lLbl.Font = Enum.Font.Gotham; lLbl.TextSize = 12
+        lLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+        local rLbl = Instance.new("TextLabel", row)
+        rLbl.Size = UDim2.new(0.34, 0, 1, 0); rLbl.Position = UDim2.new(0.63, 0, 0, 0)
+        rLbl.BackgroundTransparency = 1; rLbl.Text = rightTxt; rLbl.TextColor3 = rCol
+        rLbl.Font = Enum.Font.GothamBold; rLbl.TextSize = 13
+        rLbl.TextXAlignment = Enum.TextXAlignment.Right
+
+        return rLbl  -- return right label so caller can update it
+    end
+
+    local function mkSec(parent, txt, order)
+        local l = Instance.new("TextLabel", parent)
+        l.Size = UDim2.new(1, 0, 0, 26); l.BackgroundTransparency = 1
+        l.Text = txt; l.TextColor3 = Color3.fromRGB(90, 140, 230)
+        l.Font = Enum.Font.GothamBold; l.TextSize = 11
+        l.TextXAlignment = Enum.TextXAlignment.Left; l.LayoutOrder = order or 0
+    end
+
+    local function mkCard(parent, txt, order)
+        local card = Instance.new("Frame", parent)
+        card.Size = UDim2.new(1, 0, 0, 0); card.AutomaticSize = Enum.AutomaticSize.Y
+        card.BackgroundColor3 = Color3.fromRGB(14, 18, 36); card.BorderSizePixel = 0
+        card.LayoutOrder = order or 0
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 9)
+        local pad = Instance.new("UIPadding", card)
+        pad.PaddingLeft = UDim.new(0, 14); pad.PaddingRight = UDim.new(0, 14)
+        pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+        local l = Instance.new("TextLabel", card)
+        l.Size = UDim2.new(1, 0, 0, 0); l.AutomaticSize = Enum.AutomaticSize.Y
+        l.BackgroundTransparency = 1; l.Text = txt
+        l.TextColor3 = Color3.fromRGB(155, 175, 220)
+        l.Font = Enum.Font.Gotham; l.TextSize = 12
+        l.TextWrapped = true; l.TextXAlignment = Enum.TextXAlignment.Left
+        return l
+    end
+
+    -- populate content
+    local currentTab = "Tech War Spy"
+    local selectedSpy = nil
+
+    local function clearContent()
+        for _, c in ipairs(cScroll:GetChildren()) do
+            if not (c:IsA("UIListLayout") or c:IsA("UIPadding")) then c:Destroy() end
+        end
+    end
+
+    local function populate(countryName, tab)
+        clearContent()
+        local me = getCountry() or "You"
+        local ord = 1
+
+        if tab == "Tech War Spy" then
+            mkSec(cScroll, "⚔  War Analysis: " .. me .. " vs " .. countryName, ord); ord = ord + 1
+
+            local suggestions = {}
+            -- find target player
+            local targetPlayer = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                local ls = dig(p, "leaderstats")
+                if ls and dig(ls, "Country") and dig(ls, "Country").Value == countryName then
+                    targetPlayer = p; break
+                end
+            end
+
+            for _, cat in ipairs(SPY_CATS) do
+                local myT  = getTech(player, cat.id)
+                local enT  = targetPlayer and getTech(targetPlayer, cat.id) or 0
+                local adv, col
+                if myT > enT then
+                    adv = "You 🟢"; col = Color3.fromRGB(80, 220, 120)
+                elseif enT > myT then
+                    adv = "Enemy 🔴"; col = Color3.fromRGB(255, 80, 80)
+                    table.insert(suggestions, "• " .. cat.label .. ": enemy leads — research this first!")
+                else
+                    adv = "Even ⚪"; col = Color3.fromRGB(170, 170, 170)
+                end
+                mkRow(cScroll, cat.icon .. "  " .. cat.label .. " Tech Advantage", adv, col, ord); ord = ord + 1
+                mkRow(cScroll, "Your vs Enemy " .. cat.label .. " Techs",
+                    myT .. " vs " .. enT, Color3.fromRGB(140, 150, 195), ord); ord = ord + 1
+            end
+
+            mkSec(cScroll, "📋  Research Recommendations", ord); ord = ord + 1
+            local txt = #suggestions > 0
+                and table.concat(suggestions, "\n")
+                or "✅  You lead or match in all tech categories. Maintain your advantage!"
+            mkCard(cScroll, txt, ord)
+
+        elseif tab == "Military Stats" then
+            mkSec(cScroll, "🪖  Military: " .. me .. " vs " .. countryName, ord); ord = ord + 1
+            local myCounts, enCounts = {}, {}
+            for _, u in ipairs(myUnits()) do
+                local ut = dig(u, "Type"); local uc2 = dig(u, "Current")
+                if ut and uc2 then myCounts[ut.Value] = (myCounts[ut.Value] or 0) + uc2.Value end
+            end
+            for _, u in ipairs(workspace.Units:GetChildren()) do
+                local ow = dig(u, "Owner"); local ut = dig(u, "Type"); local uc2 = dig(u, "Current")
+                if ow and ut and uc2 then
+                    for _, p in ipairs(Players:GetPlayers()) do
+                        local ls = dig(p, "leaderstats")
+                        if ls and dig(ls,"Country") and dig(ls,"Country").Value == countryName
+                            and p.Name == ow.Value then
+                            enCounts[ut.Value] = (enCounts[ut.Value] or 0) + uc2.Value
+                        end
+                    end
+                end
+            end
+            for _, t in ipairs({"Infantry","Tank","Artillery","Anti Aircraft","Fighter","Attacker","Bomber","Destroyer","Submarine"}) do
+                local mine = myCounts[t] or 0; local theirs = enCounts[t] or 0
+                local col = mine >= theirs and Color3.fromRGB(80, 220, 120) or Color3.fromRGB(255, 80, 80)
+                mkRow(cScroll, t, fmt(mine) .. " vs " .. fmt(theirs), col, ord); ord = ord + 1
+            end
+
+        elseif tab == "General Info" then
+            mkSec(cScroll, "🌍  Overview: " .. countryName, ord); ord = ord + 1
+            local base2 = dig(workspace, "Baseplate", "Cities")
+            local folder = base2 and base2:FindFirstChild(countryName)
+            local cc = folder and #folder:GetChildren() or 0
+            mkRow(cScroll, "City Count", tostring(cc), Color3.fromRGB(100, 200, 255), ord); ord = ord + 1
+            mkRow(cScroll, "Alliance Targeted", S.allyT[countryName] and "Yes" or "No",
+                S.allyT[countryName] and Color3.fromRGB(80,220,120) or Color3.fromRGB(180,180,180), ord); ord = ord + 1
+            mkRow(cScroll, "Puppet Targeted", S.puppetT[countryName] and "Yes" or "No",
+                S.puppetT[countryName] and Color3.fromRGB(255,200,50) or Color3.fromRGB(180,180,180), ord); ord = ord + 1
+        end
+
+        cLL:ApplyLayout()
+        cScroll.CanvasSize = UDim2.new(0, 0, 0, cLL.AbsoluteContentSize.Y + 16)
+    end
+
+    -- tabs
+    local tabBtns = {}
+    local TAB_NAMES = {"General Info", "Military Stats", "Tech War Spy"}
+
+    local function switchTab(name)
+        currentTab = name
+        for n, btn in pairs(tabBtns) do
+            btn.BackgroundColor3 = n == name and Color3.fromRGB(55, 105, 210) or Color3.fromRGB(18, 18, 32)
+            btn.TextColor3       = n == name and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,135,175)
+        end
+        if selectedSpy then populate(selectedSpy, name) end
+    end
+
+    for i, tname in ipairs(TAB_NAMES) do
+        local tb = Instance.new("TextButton", tabRow)
+        tb.Size = UDim2.new(0, 156, 1, 0)
+        tb.BackgroundColor3 = tname == "Tech War Spy" and Color3.fromRGB(55,105,210) or Color3.fromRGB(18,18,32)
+        tb.BorderSizePixel = 0
+        tb.Text = tname
+        tb.TextColor3 = tname == "Tech War Spy" and Color3.fromRGB(255,255,255) or Color3.fromRGB(120,135,175)
+        tb.Font = Enum.Font.GothamBold; tb.TextSize = 11
+        tb.LayoutOrder = i
+        Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 8)
+        tabBtns[tname] = tb
+        tb.MouseButton1Click:Connect(function() switchTab(tname) end)
+    end
+
+    -- country list builder
+    local function buildList(filter)
+        filter = (filter or ""):lower()
+        for _, c in ipairs(scroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+
+        local countries = {}
+        local seen = {}
+        local base2 = dig(workspace, "Baseplate", "Cities")
+        if base2 then
+            for _, f in ipairs(base2:GetChildren()) do
+                if not seen[f.Name] then countries[#countries+1] = f.Name; seen[f.Name] = true end
+            end
+        end
+        for _, p in ipairs(Players:GetPlayers()) do
+            local ls = dig(p, "leaderstats")
+            if ls and dig(ls, "Country") then
+                local cn = dig(ls, "Country").Value
+                if not seen[cn] then countries[#countries+1] = cn; seen[cn] = true end
+            end
+        end
+        table.sort(countries)
+
+        for ord, cn in ipairs(countries) do
+            if filter == "" or cn:lower():find(filter, 1, true) then
+                local btn = Instance.new("TextButton", scroll)
+                btn.Size = UDim2.new(1, 0, 0, 48)
+                btn.BackgroundColor3 = Color3.fromRGB(16, 16, 27)
+                btn.BorderSizePixel = 0; btn.AutoButtonColor = false
+                btn.LayoutOrder = ord
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+
+                local fLbl = Instance.new("TextLabel", btn)
+                fLbl.Size = UDim2.new(0, 38, 1, 0); fLbl.Position = UDim2.new(0, 8, 0, 0)
+                fLbl.BackgroundTransparency = 1; fLbl.Text = "🏳️"; fLbl.TextSize = 20
+
+                local nLbl = Instance.new("TextLabel", btn)
+                nLbl.Size = UDim2.new(1, -54, 0, 22); nLbl.Position = UDim2.new(0, 50, 0, 6)
+                nLbl.BackgroundTransparency = 1; nLbl.Text = cn
+                nLbl.TextColor3 = Color3.fromRGB(200, 215, 245)
+                nLbl.Font = Enum.Font.GothamBold; nLbl.TextSize = 12
+                nLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+                local base3 = dig(workspace, "Baseplate", "Cities")
+                local f2 = base3 and base3:FindFirstChild(cn)
+                local cc = f2 and #f2:GetChildren() or 0
+
+                local cLbl = Instance.new("TextLabel", btn)
+                cLbl.Size = UDim2.new(1, -54, 0, 16); cLbl.Position = UDim2.new(0, 50, 0, 28)
+                cLbl.BackgroundTransparency = 1; cLbl.Text = cc .. " cities"
+                cLbl.TextColor3 = Color3.fromRGB(80, 105, 160)
+                cLbl.Font = Enum.Font.Gotham; cLbl.TextSize = 10
+                cLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+                btn.MouseEnter:Connect(function()
+                    if selectedSpy ~= cn then
+                        TweenService:Create(btn, TweenInfo.new(0.12),
+                            { BackgroundColor3 = Color3.fromRGB(22, 22, 38) }):Play()
+                    end
+                end)
+                btn.MouseLeave:Connect(function()
+                    if selectedSpy ~= cn then
+                        TweenService:Create(btn, TweenInfo.new(0.12),
+                            { BackgroundColor3 = Color3.fromRGB(16, 16, 27) }):Play()
+                    end
+                end)
+                btn.MouseButton1Click:Connect(function()
+                    selectedSpy = cn
+                    cName.Text = cn
+                    cSub.Text  = "War Analysis: " .. (getCountry() or "You") .. " vs " .. cn
+                    for _, c2 in ipairs(scroll:GetChildren()) do
+                        if c2:IsA("TextButton") then
+                            c2.BackgroundColor3 = Color3.fromRGB(16, 16, 27)
+                        end
+                    end
+                    TweenService:Create(btn, TweenInfo.new(0.15),
+                        { BackgroundColor3 = Color3.fromRGB(28, 38, 80) }):Play()
+                    populate(cn, currentTab)
+                end)
+            end
+        end
+        scroll.CanvasSize = UDim2.new(0, 0, 0, sLL.AbsoluteContentSize.Y + 8)
+    end
+
+    buildList()
+    sBox:GetPropertyChangedSignal("Text"):Connect(function() buildList(sBox.Text) end)
+
+    -- auto-click first entry
+    task.defer(function()
+        local first = scroll:FindFirstChildWhichIsA("TextButton")
+        if first then first.MouseButton1Click:Fire() end
+    end)
+
+    SpyGui = sg
+end
+
+-- ══════════════════════════════════════════════════════════════
+--  TABS SETUP
+-- ══════════════════════════════════════════════════════════════
+
+-- ─── OVERVIEW ────────────────────────────────────────────────
+local OvTab = Window:CreateTab("Overview", "layout-dashboard")
+OvTab:CreateSection("Raven Hub  •  Rise of Nations  v8.0")
+
+local cityLbl  = OvTab:CreateLabel("Cities: —", "map-pin",  Color3.fromRGB(160,170,200), false)
+local troopLbl = OvTab:CreateLabel("Troops: —", "swords",   Color3.fromRGB(160,170,200), false)
+local farmLbl  = OvTab:CreateLabel("AutoFarm: Inactive", "zap", Color3.fromRGB(160,160,160), false)
+
+task.spawn(function()
+    while task.wait(8) do
+        if not _G.RAVEN_ACTIVE then break end
+        local cc = getCities()
+        cityLbl:Set("Cities: " .. #cc, "map-pin", Color3.fromRGB(100, 200, 255), false)
+        local tot = 0
+        for _, u in ipairs(myUnits()) do
+            local cur = dig(u, "Current"); if cur then tot = tot + cur.Value end
+        end
+        troopLbl:Set("Troops: " .. fmt(tot), "swords", Color3.fromRGB(100, 255, 155), false)
+        local fp = S.farmPhase == 0 and "Inactive"
+            or ("Phase " .. S.farmPhase .. "  —  " .. S.farmStatus)
+        farmLbl:Set("AutoFarm: " .. fp, "zap",
+            S.autoFarm and Color3.fromRGB(255, 200, 50) or Color3.fromRGB(155, 155, 155), false)
+    end
+end)
+
+OvTab:CreateDivider()
+OvTab:CreateSection("Quick Actions")
+
+OvTab:CreateButton({ Name = "🔍  Open Tech War Spy", Callback = function()
+    openSpyPanel(); addLog("Tech Spy opened")
+end })
+
+OvTab:CreateButton({ Name = "📊  Full Nation Report (F9)", Callback = function()
+    local cc = getCities()
+    local uc, tot = {}, 0
+    for _, u in ipairs(myUnits()) do
+        local ut = dig(u,"Type"); local ucv = dig(u,"Current")
+        if ut and ucv then uc[ut.Value]=(uc[ut.Value] or 0)+ucv.Value; tot=tot+ucv.Value end
+    end
+    local mines,facts,ports,air = 0,0,0,0
+    for _, c in ipairs(cc) do
+        if hasB(c,"Mine")    then mines=mines+1 end
+        if hasB(c,"Factory") then facts=facts+1 end
+        if hasB(c,"Port")    then ports=ports+1 end
+        if hasB(c,"Airport") then air=air+1     end
+    end
+    print("╔══════════════════════════════════════╗")
+    print("║  RAVEN HUB  —  "..(getCountry() or "Unknown"))
+    print("╠══════════════════════════════════════╣")
+    print(("║  Cities:%d  Mines:%d  Factories:%d"):format(#cc,mines,facts))
+    print(("║  Ports:%d   Airports:%d"):format(ports,air))
+    print("╠══════════════════════════════════════╣")
+    for t,c in pairs(uc) do print(("║  %-24s %s"):format(t,fmt(c))) end
+    print(("║  ──TOTAL: %s"):format(fmt(tot)))
+    print("╚══════════════════════════════════════╝")
+    N("Report","Printed to F9 console","clipboard-list")
+end })
+
+OvTab:CreateButton({ Name = "⚡  One-Click Full City Development", Callback = function()
+    local n = 0
+    for _, city in ipairs(getCities()) do
+        local res, ok = getRes(city), false
+        for ore in pairs(ORE_SET) do if (res[ore] or 0) >= 1 then ok = true; break end end
+        if ok and not hasB(city,"Mine") then
+            task.wait(0.1); fire(gm.CreateBuilding,{[1]=city},"Mines"); n=n+1
+        end
+        for _, b in ipairs({"Factory","Arms Factory","Recruitment Center","Research Lab"}) do
+            if not hasB(city,b) then
+                task.wait(0.1); fire(gm.CreateBuilding,{[1]=city},b); n=n+1
+            end
+        end
+    end
+    N("Full Dev","Queued "..n.." buildings","zap"); addLog("Full dev: "..n)
+end })
+
+OvTab:CreateButton({ Name = "⚔️  Quick Max Army (All Types ×10)", Callback = function()
+    local land={"Infantry","Tank","Anti Aircraft","Artillery"}
+    local airT={"Fighter","Attacker","Bomber"}
+    local seaT={"Destroyer","Frigate","Battleship"}
+    local cc=getCities(); local airC,portC={},{}
+    for _,c in ipairs(cc) do
+        if hasB(c,"Airport") then airC[#airC+1]=c end
+        if hasB(c,"Port")    then portC[#portC+1]=c end
+    end
+    local n=0
+    if #cc>0 then
+        for _,t in ipairs(land) do for i=1,10 do fire(gm.CreateUnit,{[1]=cc[((i-1)%#cc)+1]},t); n=n+1; task.wait(0.07) end end
+    end
+    if #airC>0 then
+        for _,t in ipairs(airT) do for i=1,10 do fire(gm.CreateUnit,{[1]=airC[((i-1)%#airC)+1]},t); n=n+1; task.wait(0.07) end end
+    end
+    if #portC>0 then
+        for _,t in ipairs(seaT) do for i=1,10 do fire(gm.CreateUnit,{[1]=portC[((i-1)%#portC)+1]},t); n=n+1; task.wait(0.07) end end
+    end
+    N("Max Army","Built "..n.." units","flame"); addLog("Max army: "..n)
+end })
+
+OvTab:CreateButton({ Name = "📜  Print Action Log", Callback = function()
+    print("╔══════════════════════════════╗")
+    for _,e in ipairs(S.actionLog) do print("║  "..e) end
+    print("╚══════════════════════════════╝")
+    N("Log",#S.actionLog.." entries","scroll-text")
+end })
+
+-- ─── TECH SPY TAB ────────────────────────────────────────────
+local SpyTab = Window:CreateTab("Tech Spy","search")
+SpyTab:CreateSection("Tech War Spy")
+SpyTab:CreateParagraph({Title="About",Content="Opens a full-screen panel to analyse any country's tech levels vs yours. Compare Tank, Infantry, Air, Naval, Nuclear tech and get automatic research recommendations."})
+SpyTab:CreateButton({ Name="🔍  Open Tech War Spy Panel", Callback=function()
+    openSpyPanel(); addLog("Tech Spy opened")
+end })
+SpyTab:CreateDivider()
+SpyTab:CreateSection("Quick Research")
+SpyTab:CreateDropdown({Name="Category",Options=TECH_CATS,CurrentOption={"Military"},MultipleOptions=false,Flag="SpySelTech",
+    Callback=function(o) S.selTech=o[1] or "Military" end})
+SpyTab:CreateButton({Name="🔬  Research Selected",Callback=function()
+    pcall(function() gm.ResearchTech:FireServer(S.selTech) end)
+    N("Tech","Researching "..S.selTech,"flask-conical")
+end})
+SpyTab:CreateButton({Name="🚀  Research ALL Categories",Callback=function()
+    for i,cat in ipairs(TECH_CATS) do
+        task.delay(i*0.5, function() pcall(function() gm.ResearchTech:FireServer(cat) end) end)
+    end
+    N("Tech","Queued all "..#TECH_CATS.." categories","rocket")
+end})
+SpyTab:CreateButton({Name="🌐  Share Tech with ALL Players",Callback=function()
+    local n=0
+    for _,c in ipairs(allCountries()) do
+        pcall(function() gm.ShareTech:FireServer(c) end); n=n+1; task.wait(0.3)
+    end
+    N("Tech","Shared with "..n,"share-2"); addLog("Tech shared: "..n)
+end})
+local smartResLbl=SpyTab:CreateLabel("Smart Research: Inactive.","activity",Color3.fromRGB(155,155,155),false)
+SpyTab:CreateToggle({Name="Smart Auto Research",CurrentValue=false,Flag="SmartResearch",
+    Callback=function(v)
+        S.smartResearch=v
+        smartResLbl:Set(v and "Status: Researching priority techs." or "Status: Inactive.",
+            "flask-conical",v and Color3.fromRGB(80,200,255) or Color3.fromRGB(155,155,155),false)
+        N("Research",v and "Smart Research ON" or "OFF","flask-conical")
+    end})
+
+-- ─── BUILDING ────────────────────────────────────────────────
+local BldTab = Window:CreateTab("Building","hammer")
+BldTab:CreateSection("Mines")
+BldTab:CreateSlider({Name="Min Ore Amount",Range={1,20},Increment=1,Suffix=" ore",CurrentValue=1,Flag="MinesMin",
+    Callback=function(v) S.minesMin=v end})
+BldTab:CreateButton({Name="⛏️  Build Mines (Smart)",Callback=function()
+    local built,skip=0,0
+    for _,city in ipairs(getCities()) do
+        if not hasB(city,"Mine") then
+            local res,ok=getRes(city),false
+            for ore in pairs(ORE_SET) do if (res[ore] or 0)>=S.minesMin then ok=true;break end end
+            if ok then task.wait(0.1);fire(gm.CreateBuilding,{[1]=city},"Mines");built=built+1 else skip=skip+1 end
+        else skip=skip+1 end
+    end
+    N("Mines","Built "..built.."  Skipped "..skip,"pickaxe"); addLog("Mines: "..built)
+end})
+BldTab:CreateSection("Factories")
+BldTab:CreateDropdown({Name="Building Type",Options=FACTORY_TYPES,CurrentOption={"Factory"},MultipleOptions=false,Flag="SelFactory",
+    Callback=function(o) S.selFactory=o[1] or "Factory" end})
+BldTab:CreateButton({Name="🏭  Build in All Cities",Callback=function()
+    local n=0
+    for _,city in ipairs(getCities()) do
+        if not hasB(city,S.selFactory) then task.wait(0.1);fire(gm.CreateBuilding,{[1]=city},S.selFactory);n=n+1 end
+    end
+    N("Factories","Built "..n.." × "..S.selFactory,"building-2"); addLog("Factory: "..n)
+end})
+BldTab:CreateSection("Auto Construction")
+BldTab:CreateParagraph({Title="Info",Content="Select factory type and quantity, then build in random eligible cities without that factory type already built."})
+BldTab:CreateDropdown({Name="Select Factory",Options=FACTORY_TYPES,CurrentOption={"Fertilizer Factory"},MultipleOptions=false,Flag="AutoConstF",
+    Callback=function(o) S.autoConstFactory=o[1] or "Factory" end})
+BldTab:CreateSlider({Name="Quantity to Build",Range={1,20},Increment=1,Suffix="",CurrentValue=2,Flag="AutoConstQ",
+    Callback=function(v) S.autoConstQty=v end})
+BldTab:CreateButton({Name="🔨  Build Factories Now",Callback=function()
+    local eligible={}
+    for _,city in ipairs(getCities()) do
+        if not hasB(city,S.autoConstFactory) then eligible[#eligible+1]=city end
+    end
+    if #eligible==0 then N("Construction","All cities already have "..S.autoConstFactory,"check"); return end
+    for i=#eligible,2,-1 do local j=math.random(1,i); eligible[i],eligible[j]=eligible[j],eligible[i] end
+    local built=0
+    for i=1,math.min(S.autoConstQty,#eligible) do
+        fire(gm.CreateBuilding,{[1]=eligible[i]},S.autoConstFactory); built=built+1; task.wait(0.12)
+    end
+    N("Construction","Built "..built.." × "..S.autoConstFactory,"hammer"); addLog("AutoConst: "..built)
+end})
+local constLbl=BldTab:CreateLabel("Auto Construction: Inactive.","activity",Color3.fromRGB(155,155,155),false)
+BldTab:CreateToggle({Name="Auto Construction (Loop Every 90s)",CurrentValue=false,Flag="AutoConst",
+    Callback=function(v)
+        S.autoConst=v
+        constLbl:Set(v and "Status: Active — building "..S.autoConstFactory.." continuously." or "Status: Inactive.",
+            "hammer",v and Color3.fromRGB(255,200,50) or Color3.fromRGB(155,155,155),false)
+        N("Construction",v and "Auto Construction ON" or "OFF","hammer")
+    end})
+BldTab:CreateSection("Mass Build")
+BldTab:CreateButton({Name="✈️  Airports + Ports Everywhere",Callback=function()
+    local n=0
+    for _,city in ipairs(getCities()) do
+        for _,b in ipairs({"Airport","Port"}) do
+            if not hasB(city,b) then task.wait(0.1);fire(gm.CreateBuilding,{[1]=city},b);n=n+1 end
+        end
+    end
+    N("Infra","Built "..n.." airports/ports","anchor")
+end})
+BldTab:CreateButton({Name="☢️  Nuclear Plants Everywhere",Callback=function()
+    local n=0
+    for _,city in ipairs(getCities()) do
+        if not hasB(city,"Nuclear Plant") then task.wait(0.15);fire(gm.CreateBuilding,{[1]=city},"Nuclear Plant");n=n+1 end
+    end
+    N("Nuclear","Built "..n.." plants","zap")
+end})
+BldTab:CreateButton({Name="🔄  Full Development (All Types)",Callback=function()
+    local n=0
+    local blds={"Recruitment Center","Factory","Arms Factory","Research Lab","Airport","Port"}
+    for _,city in ipairs(getCities()) do
+        local res,ok=getRes(city),false
+        for ore in pairs(ORE_SET) do if (res[ore] or 0)>=1 then ok=true;break end end
+        if ok and not hasB(city,"Mine") then task.wait(0.1);fire(gm.CreateBuilding,{[1]=city},"Mines");n=n+1 end
+        for _,b in ipairs(blds) do
+            if not hasB(city,b) then task.wait(0.1);fire(gm.CreateBuilding,{[1]=city},b);n=n+1 end
+        end
+    end
+    N("Full Dev","Queued "..n.." buildings","layers"); addLog("Full dev: "..n)
+end})
+
+-- ─── UNITS ───────────────────────────────────────────────────
+local UnitsTab = Window:CreateTab("Units","swords")
+UnitsTab:CreateSection("Unit Builder")
+UnitsTab:CreateSlider({Name="Count",Range={1,500},Increment=1,Suffix=" units",CurrentValue=10,Flag="UBAmt",
+    Callback=function(v) S.ubAmt=v end})
+UnitsTab:CreateSlider({Name="Delay (ms)",Range={50,2000},Increment=50,Suffix="ms",CurrentValue=120,Flag="UBDelay",
+    Callback=function(v) S.ubDelay=v/1000 end})
+UnitsTab:CreateDropdown({Name="Unit Type",Options=UNIT_TYPES,CurrentOption={"Infantry"},MultipleOptions=false,Flag="UBType",
+    Callback=function(o) S.ubType=o[1] or "Infantry" end})
+UnitsTab:CreateButton({Name="⚔️  Mass Build Units",Callback=function()
+    local req=UNIT_REQ[S.ubType]; local cc={}
+    for _,city in ipairs(getCities()) do
+        if req then if hasB(city,req) then cc[#cc+1]=city end else cc[#cc+1]=city end
+    end
+    if #cc==0 then N("Units","No valid cities for "..S.ubType,"alert-circle"); return end
+    local built=0
+    for i=1,S.ubAmt do
+        fire(gm.CreateUnit,{[1]=cc[((i-1)%#cc)+1]},S.ubType); built=built+1; task.wait(S.ubDelay)
+    end
+    N("Units","Built "..built.." × "..S.ubType,"shield"); addLog("Units: "..built.." "..S.ubType)
+end})
+UnitsTab:CreateSection("Balanced Armies")
+UnitsTab:CreateSlider({Name="Per Type",Range={1,100},Increment=1,Suffix=" each",CurrentValue=5,Flag="BalCount",
+    Callback=function(v) S.balCount=v end})
+UnitsTab:CreateButton({Name="🪖  Balanced Land Army",Callback=function()
+    local types={"Infantry","Tank","Anti Aircraft","Artillery"}; local cc=getCities()
+    if #cc==0 then return end; local n=0
+    for _,t in ipairs(types) do for i=1,S.balCount do
+        fire(gm.CreateUnit,{[1]=cc[((i-1)%#cc)+1]},t); n=n+1; task.wait(0.1)
+    end end
+    N("Land Army","Queued "..n.." units","shield")
+end})
+UnitsTab:CreateButton({Name="✈️  Balanced Air Force",Callback=function()
+    local types={"Fighter","Attacker","Bomber"}; local airC={}
+    for _,c in ipairs(getCities()) do if hasB(c,"Airport") then airC[#airC+1]=c end end
+    if #airC==0 then N("Air","No airports!","alert-circle"); return end; local n=0
+    for _,t in ipairs(types) do for i=1,S.balCount do
+        fire(gm.CreateUnit,{[1]=airC[((i-1)%#airC)+1]},t); n=n+1; task.wait(0.1)
+    end end
+    N("Air Force","Queued "..n.." aircraft","plane")
+end})
+UnitsTab:CreateButton({Name="⚓  Full Naval Fleet",Callback=function()
+    local types={"Destroyer","Frigate","Battleship","Aircraft Carrier","Submarine"}; local portC={}
+    for _,c in ipairs(getCities()) do if hasB(c,"Port") then portC[#portC+1]=c end end
+    if #portC==0 then N("Navy","No ports!","alert-circle"); return end; local n=0
+    for _,t in ipairs(types) do for i=1,S.balCount do
+        fire(gm.CreateUnit,{[1]=portC[((i-1)%#portC)+1]},t); n=n+1; task.wait(0.1)
+    end end
+    N("Navy","Queued "..n.." ships","anchor")
+end})
+
+-- ─── AUTO MILITARY ───────────────────────────────────────────
+local MilTab = Window:CreateTab("Auto Military","shield-alert")
+
+MilTab:CreateSection("Auto Declare War")
+MilTab:CreateParagraph({Title="Info",Content="Automatically declares war on countries you have a Conquest justification against (only if they still have cities)."})
+MilTab:CreateToggle({Name="Auto Declare Conquest War",CurrentValue=false,Flag="AutoDeclare",
+    Callback=function(v) S.autoDeclare=v; N("War",v and "Auto War ON" or "OFF",v and "swords" or "shield") end})
+
+MilTab:CreateSection("Auto Assign Troops")
+MilTab:CreateParagraph({Title="Info",Content="Groups all Tanks and Infantry into 'Army' and assigns a Military Leader every 25 seconds."})
+local assignLbl=MilTab:CreateLabel("Status: Inactive.","activity",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Enable Auto Assign Troops",CurrentValue=false,Flag="AutoAssign",
+    Callback=function(v)
+        S.autoAssign=v
+        if not v then assignLbl:Set("Status: Inactive.","activity",Color3.fromRGB(155,155,155),false) end
+        N("Troops",v and "Auto Assign ON" or "OFF","users")
+    end})
+
+MilTab:CreateSection("Auto Bomber Attack")
+MilTab:CreateParagraph({Title="Info",Content="Sends all Bombers to attack enemy cities every 20 seconds (Capture order)."})
+local bomberLbl=MilTab:CreateLabel("Status: Inactive.","plane",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Enable Auto Bomber Attack",CurrentValue=false,Flag="AutoBomber",
+    Callback=function(v)
+        S.autoBomber=v
+        bomberLbl:Set(v and "Status: Bombers attacking." or "Status: Inactive.","plane",
+            v and Color3.fromRGB(255,200,50) or Color3.fromRGB(155,155,155),false)
+        N("Bomber",v and "ON" or "OFF","plane")
+    end})
+
+MilTab:CreateSection("Anti Bomber Spam")
+MilTab:CreateParagraph({Title="Info",Content="Scrambles your Fighters to intercept and destroy incoming enemy Bombers every 10 seconds."})
+local antiBomberLbl=MilTab:CreateLabel("Status: Inactive.","shield",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Enable Anti Bomber Spam",CurrentValue=false,Flag="AntiBomber",
+    Callback=function(v)
+        S.antiBomber=v
+        antiBomberLbl:Set(v and "Status: Intercepting bombers." or "Status: Inactive.","shield",
+            v and Color3.fromRGB(80,200,255) or Color3.fromRGB(155,155,155),false)
+        N("Defense",v and "Anti Bomber ON" or "OFF","shield")
+    end})
+
+MilTab:CreateSection("Auto Aircraft Creation")
+MilTab:CreateParagraph({Title="Info",Content="Automatically builds aircraft to meet your set target counts. Requires cities with Airports."})
+MilTab:CreateSlider({Name="Target Attackers",Range={0,50},Increment=1,Suffix="",CurrentValue=0,Flag="TgtAttacker",
+    Callback=function(v) S.tgtAttacker=v end})
+MilTab:CreateSlider({Name="Target Fighters",Range={0,50},Increment=1,Suffix="",CurrentValue=0,Flag="TgtFighter",
+    Callback=function(v) S.tgtFighter=v end})
+MilTab:CreateSlider({Name="Target Bombers",Range={0,50},Increment=1,Suffix="",CurrentValue=1,Flag="TgtBomber",
+    Callback=function(v) S.tgtBomber=v end})
+local aircraftLbl=MilTab:CreateLabel("Status: 0/0  0/0  0/0","activity",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Enable Auto Aircraft Creation",CurrentValue=false,Flag="AutoAircraft",
+    Callback=function(v) S.autoAircraft=v; N("Aircraft",v and "ON" or "OFF","plane") end})
+
+MilTab:CreateSection("Auto Tank Spawner + Attack")
+MilTab:CreateParagraph({Title="Info",Content="Spawns Tanks on a timer and orders them to Capture enemy cities."})
+MilTab:CreateSlider({Name="Spawn Count",Range={1,50},Increment=1,Suffix=" tanks",CurrentValue=5,Flag="TankSpawnAmt",
+    Callback=function(v) S.tankSpawnAmt=v end})
+MilTab:CreateSlider({Name="Spawn Interval",Range={10,300},Increment=5,Suffix="s",CurrentValue=30,Flag="TankSpawnInt",
+    Callback=function(v) S.tankSpawnInt=v end})
+MilTab:CreateSlider({Name="Attack Interval",Range={5,120},Increment=5,Suffix="s",CurrentValue=15,Flag="TankAtkInt",
+    Callback=function(v) S.tankAtkInt=v end})
+local tankLbl=MilTab:CreateLabel("Status: Inactive.","crosshair",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Auto Spawn Tanks",CurrentValue=false,Flag="AutoTankSpawn",
+    Callback=function(v) S.autoTankSpawn=v; N("Tanks",v and "Tank Spawner ON" or "OFF","shield") end})
+MilTab:CreateToggle({Name="Auto Tank Attack",CurrentValue=false,Flag="AutoTankAtk",
+    Callback=function(v)
+        S.autoTankAtk=v
+        tankLbl:Set(v and "Status: Tanks capturing enemy cities." or "Status: Inactive.","crosshair",
+            v and Color3.fromRGB(255,120,50) or Color3.fromRGB(155,155,155),false)
+        N("Tanks",v and "Tank Attack ON" or "OFF","crosshair")
+    end})
+
+MilTab:CreateSection("Auto Infantry Spawner + Attack")
+MilTab:CreateParagraph({Title="Info",Content="Spawns Infantry on a timer and pushes them toward enemy territory."})
+MilTab:CreateSlider({Name="Spawn Count",Range={1,100},Increment=1,Suffix=" infantry",CurrentValue=5,Flag="InfSpawnAmt",
+    Callback=function(v) S.infSpawnAmt=v end})
+MilTab:CreateSlider({Name="Spawn Interval",Range={10,300},Increment=5,Suffix="s",CurrentValue=30,Flag="InfSpawnInt",
+    Callback=function(v) S.infSpawnInt=v end})
+MilTab:CreateSlider({Name="Attack Interval",Range={5,120},Increment=5,Suffix="s",CurrentValue=15,Flag="InfAtkInt",
+    Callback=function(v) S.infAtkInt=v end})
+local infLbl=MilTab:CreateLabel("Status: Inactive.","users",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Auto Spawn Infantry",CurrentValue=false,Flag="AutoInfSpawn",
+    Callback=function(v) S.autoInfSpawn=v; N("Infantry",v and "Spawner ON" or "OFF","users") end})
+MilTab:CreateToggle({Name="Auto Infantry Attack",CurrentValue=false,Flag="AutoInfAtk",
+    Callback=function(v)
+        S.autoInfAtk=v
+        infLbl:Set(v and "Status: Infantry pushing enemy lines." or "Status: Inactive.","users",
+            v and Color3.fromRGB(255,180,50) or Color3.fromRGB(155,155,155),false)
+        N("Infantry",v and "Attack ON" or "OFF","crosshair")
+    end})
+
+MilTab:CreateSection("War Crime")
+MilTab:CreateParagraph({Title="Info",Content="When enabled, automatically burns any city you capture from a country you are at war with."})
+local warCrimeLbl=MilTab:CreateLabel("Status: Inactive.","flame",Color3.fromRGB(155,155,155),false)
+MilTab:CreateToggle({Name="Enable War Crime (Burn Captured Cities)",CurrentValue=false,Flag="WarCrime",
+    Callback=function(v)
+        S.warCrime=v
+        warCrimeLbl:Set(v and "Status: ACTIVE — burning all captures." or "Status: Inactive.","flame",
+            v and Color3.fromRGB(255,80,50) or Color3.fromRGB(155,155,155),false)
+        N("War Crime",v and "ENABLED — burn all captures!" or "Disabled","flame")
+    end})
+MilTab:CreateButton({Name="🚀  Launch Nuke (War Target)",Callback=function()
+    if S.warTarget then
+        pcall(function() gm.LaunchNuke:FireServer(S.warTarget) end)
+        N("☢️ Nuke","Launched at "..S.warTarget,"zap"); addLog("Nuke → "..S.warTarget)
+    else N("Nuke","Set war target in Diplomacy first","alert-circle") end
+end})
+
+-- ─── DIPLOMACY ───────────────────────────────────────────────
+local DipTab = Window:CreateTab("Diplomacy","handshake")
+DipTab:CreateSection("Target Country")
+DipTab:CreateInput({Name="Country Name",CurrentValue="",PlaceholderText="e.g. Germany",
+    RemoveTextAfterFocusLost=false,Flag="DiploCountry",
+    Callback=function(t) S.selCountry = t ~= "" and t or nil end})
+DipTab:CreateSection("Alliance")
+DipTab:CreateButton({Name="🤝  Send Alliance Request",Callback=function()
+    if not S.selCountry then N("Diplo","Enter a country","alert-circle"); return end
+    S.allyT[S.selCountry]=true; fire(gm.ManageAlliance,S.selCountry,"SendRequest")
+    N("Alliance","Request → "..S.selCountry,"handshake"); addLog("Alliance → "..S.selCountry)
+end})
+DipTab:CreateButton({Name="🌐  Ally ALL Players",Callback=function()
+    local n=0
+    for _,c in ipairs(allCountries()) do
+        S.allyT[c]=true; fire(gm.ManageAlliance,c,"SendRequest"); n=n+1; task.wait(0.4)
+    end
+    N("Alliance","Sent to "..n.." countries","users"); addLog("Allied all: "..n)
+end})
+DipTab:CreateSection("Puppet")
+DipTab:CreateButton({Name="🎭  Send Puppet Request",Callback=function()
+    if not S.selCountry then N("Puppet","Enter a country","alert-circle"); return end
+    S.puppetT[S.selCountry]=true; pcall(function() gm.ManagePuppet:FireServer(S.selCountry,"SendRequest") end)
+    N("Puppet","Request → "..S.selCountry,"user-check"); addLog("Puppet → "..S.selCountry)
+end})
+DipTab:CreateButton({Name="🌐  Puppet ALL Players",Callback=function()
+    local n=0
+    for _,c in ipairs(allCountries()) do
+        S.puppetT[c]=true; pcall(function() gm.ManagePuppet:FireServer(c,"SendRequest") end)
+        n=n+1; task.wait(0.5)
+    end
+    N("Puppet","Sent to "..n.." countries","users")
+end})
+DipTab:CreateSection("Justifications")
+DipTab:CreateDropdown({Name="Type",Options=JUSTIF_TYPES,CurrentOption={"Conquest"},MultipleOptions=false,Flag="JustifType",
+    Callback=function(o) S.justifType=o[1] or "Conquest" end})
+DipTab:CreateToggle({Name="Spam Justifications on All Players",CurrentValue=false,Flag="SpamJustif",
+    Callback=function(v) S.spamJustif=v; N("Justif",v and "Spam ON" or "OFF","target") end})
+DipTab:CreateButton({Name="🎯  Justify on Selected Country",Callback=function()
+    if not S.selCountry then N("Justify","Enter a country","alert-circle"); return end
+    pcall(function() gm.AddJustification:FireServer(S.selCountry,S.justifType) end)
+    N("Justify",S.justifType.." on "..S.selCountry,"target")
+end})
+DipTab:CreateSection("War")
+DipTab:CreateInput({Name="War Target",CurrentValue="",PlaceholderText="Country to declare war on",
+    RemoveTextAfterFocusLost=false,Flag="WarTarget",
+    Callback=function(t) S.warTarget=t ~= "" and t or nil end})
+DipTab:CreateButton({Name="⚔️  Declare War",Callback=function()
+    if not S.warTarget then N("War","Set a target","alert-circle"); return end
+    pcall(function() gm.ManageWar:FireServer(S.warTarget,"Declare") end)
+    N("War","Declared on "..S.warTarget,"swords"); addLog("War → "..S.warTarget)
+end})
+DipTab:CreateButton({Name="🕊️  Request Peace",Callback=function()
+    if not S.warTarget then N("War","Set a target","alert-circle"); return end
+    pcall(function() gm.ManageWar:FireServer(S.warTarget,"Peace") end)
+    N("Peace","Sent to "..S.warTarget,"heart-handshake")
+end})
+DipTab:CreateButton({Name="💣  Declare War on EVERYONE",Callback=function()
+    local n=0
+    for _,c in ipairs(allCountries()) do
+        pcall(function() gm.ManageWar:FireServer(c,"Declare") end); n=n+1; task.wait(0.3)
+    end
+    N("WAR","Declared on "..n.." countries","flame"); addLog("War on all: "..n)
+end})
+
+-- alliance / puppet event handler
+gm.AlertPopup.OnClientEvent:Connect(function(a, b)
+    if type(b) ~= "string" then return end
+    if a == "Alliance declined" then
+        local c = b:gsub(" has refused to join our alliance!","")
+        if c ~= b and S.allyT[c] then
+            task.delay(60, function()
+                if S.allyT[c] then fire(gm.ManageAlliance,c,"SendRequest") end
+            end)
+        end
+    elseif a == "Alliance Accepted" then
+        local c = b:gsub(" has accepted our offer of an alliance%.","")
+        if c ~= b then S.allyT[c]=nil; N("Alliance ✓",c.." accepted!","check-circle") end
+    elseif a == "Puppet declined" then
+        local c = b:gsub(" has refused to become our puppet%.","")
+        if c ~= b and S.puppetT[c] then
+            task.delay(90, function()
+                if S.puppetT[c] then pcall(function() gm.ManagePuppet:FireServer(c,"SendRequest") end) end
+            end)
+        end
+    elseif a == "Puppet Accepted" then
+        local c = b:gsub(" is now your puppet%.","")
+        if c ~= b then S.puppetT[c]=nil; N("Puppet ✓",c.." puppet!","check-circle") end
+    end
+end)
+
+-- ─── TRADING ─────────────────────────────────────────────────
+local TrdTab = Window:CreateTab("Trading","bar-chart-2")
+TrdTab:CreateSection("Auto Buy Targeted Resource")
+TrdTab:CreateDropdown({Name="Resource",Options=ALL_RES,CurrentOption={"Titanium"},MultipleOptions=false,Flag="AutoBuyType",
+    Callback=function(o) S.autoBuyType=o[1] or "Titanium" end})
+TrdTab:CreateToggle({Name="Enable Auto Buy (AI Market)",CurrentValue=false,Flag="AutoBuyAI",
+    Callback=function(v) S.massBuyAI=v; N("Buy",v and "Auto Buy ON" or "OFF","trending-up") end})
+TrdTab:CreateSection("Consumer Goods")
+TrdTab:CreateParagraph({Title="Info",Content="Sells consumer goods to AI based on their income and your production flow."})
+TrdTab:CreateDropdown({Name="Target",Options={"AI Only","Player Only","Both"},CurrentOption={"Both"},MultipleOptions=false,Flag="CGTarget",
+    Callback=function(o) S.cgTarget=o[1] or "Both" end})
+local cgLbl=TrdTab:CreateLabel("CG Status: Inactive.","activity",Color3.fromRGB(155,155,155),false)
+TrdTab:CreateToggle({Name="Auto Sell Consumer Goods",CurrentValue=false,Flag="AutoCGSell",
+    Callback=function(v)
+        S.autoCGSell=v
+        cgLbl:Set(v and "CG Status: Active — selling." or "CG Status: Inactive.","activity",
+            v and Color3.fromRGB(80,255,130) or Color3.fromRGB(155,155,155),false)
+        N("CG",v and "Auto CG ON" or "OFF","package")
+    end})
+TrdTab:CreateSection("Manual Trade")
+TrdTab:CreateDropdown({Name="Sell Resource",Options=ALL_RES,CurrentOption={"Oil"},MultipleOptions=false,Flag="SellRes",
+    Callback=function(o) S.sellRes=o[1] or "Oil" end})
+TrdTab:CreateSlider({Name="Sell Amount",Range={100,50000},Increment=100,Suffix="",CurrentValue=1000,Flag="SellAmt",
+    Callback=function(v) S.sellAmt=v end})
+TrdTab:CreateToggle({Name="AI Market Only",CurrentValue=true,Flag="SellAI",Callback=function(v) S.aiOnly=v end})
+TrdTab:CreateButton({Name="💸  Sell Now",Callback=function()
+    local mode=S.aiOnly and "AI" or "All"
+    pcall(function() gm.TradeResource:FireServer(S.sellRes,-S.sellAmt,mode) end)
+    N("Sell",fmt(S.sellAmt).." × "..S.sellRes,"trending-down")
+end})
+TrdTab:CreateDropdown({Name="Buy Resource",Options=ALL_RES,CurrentOption={"Titanium"},MultipleOptions=false,Flag="BuyRes",
+    Callback=function(o) S.buyRes=o[1] or "Titanium" end})
+TrdTab:CreateSlider({Name="Buy Amount",Range={100,50000},Increment=100,Suffix="",CurrentValue=1000,Flag="BuyAmt",
+    Callback=function(v) S.buyAmt=v end})
+TrdTab:CreateButton({Name="💰  Buy Now",Callback=function()
+    pcall(function() gm.TradeResource:FireServer(S.buyRes,S.buyAmt,"All") end)
+    N("Buy",fmt(S.buyAmt).." × "..S.buyRes,"trending-up")
+end})
+TrdTab:CreateSection("Quick Buy")
+for _,e in ipairs({{"🔩  Titanium","Titanium"},{"⚡  Electronics","Electronics"},{"🛢️  Oil","Oil"},{"🌾  Food","Food"},{"💎  Diamond","Diamond"}}) do
+    local label,res=e[1],e[2]
+    TrdTab:CreateButton({Name=label,Callback=function()
+        for i=1,10 do pcall(function() gm.TradeResource:FireServer(res,5000,"All") end); task.wait(0.2) end
+        N("Buy","Mass bought "..res,"package")
+    end})
+end
+TrdTab:CreateButton({Name="🗑️  Dump All Surplus Resources",Callback=function()
+    for _,r in ipairs({"Oil","Iron","Copper","Coal","Aluminum","Chromium","Phosphate"}) do
+        pcall(function() gm.TradeResource:FireServer(r,-99999,"AI") end); task.wait(0.2)
+    end
+    N("Dump","Sold all surplus","trash-2")
+end})
+
+-- ─── TECH & LAWS ─────────────────────────────────────────────
+local TechTab = Window:CreateTab("Tech & Laws","flask-conical")
+TechTab:CreateSection("Best Law Setup")
+TechTab:CreateParagraph({Title="Info",Content="Enacts a sequence of powerful laws automatically. Monitors PP and disables itself upon completion."})
+local bestLawLbl=TechTab:CreateLabel("Status: Inactive.","landmark",Color3.fromRGB(155,155,155),false)
+TechTab:CreateToggle({Name="Enable Best Law Setup",CurrentValue=false,Flag="BestLaws",
+    Callback=function(v)
+        S.bestLaws=v
+        bestLawLbl:Set(v and "Status: Enacting laws..." or "Status: Inactive.","landmark",
+            v and Color3.fromRGB(255,220,50) or Color3.fromRGB(155,155,155),false)
+        N("Laws",v and "Best Laws ON" or "OFF","landmark")
+    end})
+TechTab:CreateSection("Manual Laws")
+TechTab:CreateDropdown({Name="Tax Level",Options={"Low","Medium","High","Maximum"},CurrentOption={"Maximum"},MultipleOptions=false,Flag="TaxLevel",
+    Callback=function(o) S.selTax=o[1] or "Maximum" end})
+TechTab:CreateButton({Name="💰  Set Tax Law",Callback=function()
+    pcall(function() gm.SetTaxLaw:FireServer(S.selTax) end); N("Tax","Set to "..S.selTax,"landmark")
+end})
+TechTab:CreateDropdown({Name="Conscription Level",Options={"Volunteer","Selective","Universal","Total War"},CurrentOption={"Total War"},MultipleOptions=false,Flag="ConsLevel",
+    Callback=function(o) S.selCons=o[1] or "Total War" end})
+TechTab:CreateButton({Name="🪖  Set Conscription Law",Callback=function()
+    pcall(function() gm.SetConscription:FireServer(S.selCons) end); N("Laws",S.selCons,"flag")
+end})
+TechTab:CreateButton({Name="⚡  Max All Laws Instantly",Callback=function()
+    for _,t in ipairs({"Low","Medium","High","Maximum"}) do
+        pcall(function() gm.SetTaxLaw:FireServer(t) end); task.wait(0.2)
+    end
+    pcall(function() gm.SetConscription:FireServer("Total War") end)
+    N("Laws","All laws maxed","zap")
+end})
+TechTab:CreateSection("Skin Changer")
+TechTab:CreateParagraph({Title="Info",Content="Change your country skin. This change is visual and only visible to you."})
+TechTab:CreateDropdown({Name="Select Skin",Options=SKIN_LIST,CurrentOption={"Default"},MultipleOptions=false,Flag="SelSkin",
+    Callback=function(o) S.selSkin=o[1] or "Default" end})
+TechTab:CreateButton({Name="🎨  Apply Skin",Callback=function()
+    pcall(function() gm.ChangeSkin:FireServer(S.selSkin) end)
+    N("Skin","Applied: "..S.selSkin,"palette"); addLog("Skin → "..S.selSkin)
+end})
+
+-- ─── AUTO PLAY ───────────────────────────────────────────────
+local AutoTab = Window:CreateTab("Auto Play","timer")
+AutoTab:CreateSection("Auto Farm (Experimental)")
+AutoTab:CreateParagraph({Title="Auto Farm Info",Content="Phase 1: Builds base factories (RC, Factory, Arms Factory, Research Lab) while selling Electronics and Consumer Goods automatically.\n\nPhase 2 (unlocks after base is complete): Economy Expansion — builds Airports, Ports, Nuclear Plants, maxes all laws, researches every tech category, and mass-builds a balanced army.\n\nNote: Experimental — expect future improvements."})
+local farmStatusLbl = AutoTab:CreateLabel("Status: Inactive.","zap",Color3.fromRGB(155,155,155),false)
+local farmPhaseLbl  = AutoTab:CreateLabel("Phase: —","layers",Color3.fromRGB(155,155,155),false)
+AutoTab:CreateToggle({Name="Enable Auto Farm",CurrentValue=false,Flag="AutoFarm",
+    Callback=function(v)
+        S.autoFarm=v
+        if v then
+            S.farmPhase=1; S.farmStatus="Building base infrastructure..."
+            farmStatusLbl:Set("Status: Phase 1 — Building base infrastructure.","zap",Color3.fromRGB(255,200,50),false)
+            farmPhaseLbl:Set("Phase: 1 — Base Factory Build","layers",Color3.fromRGB(255,200,50),false)
+        else
+            S.farmPhase=0; S.farmStatus="Inactive."
+            farmStatusLbl:Set("Status: Inactive.","zap",Color3.fromRGB(155,155,155),false)
+            farmPhaseLbl:Set("Phase: —","layers",Color3.fromRGB(155,155,155),false)
+        end
+        N("AutoFarm",v and "AUTO FARM STARTED ✓" or "Stopped",v and "zap" or "square")
+    end})
+AutoTab:CreateSection("Timers")
+AutoTab:CreateSlider({Name="Mine Interval",Range={10,600},Increment=10,Suffix="s",CurrentValue=60,Flag="AutoMineInt",
+    Callback=function(v) S.autoMineInt=v end})
+AutoTab:CreateSlider({Name="Unit Interval",Range={5,300},Increment=5,Suffix="s",CurrentValue=30,Flag="AutoUnitInt",
+    Callback=function(v) S.autoUnitInt=v end})
+AutoTab:CreateSlider({Name="Factory Interval",Range={30,600},Increment=30,Suffix="s",CurrentValue=120,Flag="AutoFactInt",
+    Callback=function(v) S.autoFactInt=v end})
+AutoTab:CreateSlider({Name="Sell Interval",Range={10,300},Increment=10,Suffix="s",CurrentValue=45,Flag="AutoSellInt",
+    Callback=function(v) S.autoSellInt=v end})
+AutoTab:CreateSection("Individual Auto Toggles")
+AutoTab:CreateToggle({Name="Auto Build Mines",CurrentValue=false,Flag="AutoMine",
+    Callback=function(v) S.autoMine=v; N("Auto","Mine: "..(v and "ON" or "OFF"),"hammer") end})
+AutoTab:CreateDropdown({Name="Auto Unit Type",Options=UNIT_TYPES,CurrentOption={"Infantry"},MultipleOptions=false,Flag="AutoUnitType",
+    Callback=function(o) S.autoUnitType=o[1] or "Infantry" end})
+AutoTab:CreateToggle({Name="Auto Build Units",CurrentValue=false,Flag="AutoUnit",
+    Callback=function(v) S.autoUnit=v; N("Auto","Units: "..(v and "ON" or "OFF"),"sword") end})
+AutoTab:CreateToggle({Name="Auto Build Factories",CurrentValue=false,Flag="AutoFactory",
+    Callback=function(v) S.autoFactory=v; N("Auto","Factory: "..(v and "ON" or "OFF"),"building-2") end})
+AutoTab:CreateToggle({Name="Auto Sell Resources",CurrentValue=false,Flag="AutoSell",
+    Callback=function(v) S.autoSell=v; N("Auto","Sell: "..(v and "ON" or "OFF"),"bar-chart-2") end})
+AutoTab:CreateToggle({Name="Auto Alliance (every 2 min)",CurrentValue=false,Flag="AutoAlly",
+    Callback=function(v) S.autoAlly=v; N("Auto","Alliance: "..(v and "ON" or "OFF"),"handshake") end})
+AutoTab:CreateToggle({Name="Auto Puppet (every 3 min)",CurrentValue=false,Flag="AutoPuppet",
+    Callback=function(v) S.autoPuppet=v; N("Auto","Puppet: "..(v and "ON" or "OFF"),"user-check") end})
+AutoTab:CreateSection("Controls")
+AutoTab:CreateButton({Name="⛔  STOP ALL AUTO TASKS",Callback=function()
+    S.autoFarm=false; S.autoMine=false; S.autoUnit=false; S.autoFactory=false
+    S.autoSell=false; S.autoAlly=false; S.autoPuppet=false
+    S.autoTankSpawn=false; S.autoTankAtk=false
+    S.autoInfSpawn=false; S.autoInfAtk=false
+    S.autoBomber=false; S.autoAircraft=false
+    S.autoDeclare=false; S.autoAssign=false
+    S.antiBomber=false; S.warCrime=false
+    S.smartResearch=false; S.bestLaws=false; S.autoConst=false
+    S.farmPhase=0; S.farmStatus="Inactive."
+    _G.RAVEN_ACTIVE=false
+    farmStatusLbl:Set("Status: STOPPED.","zap",Color3.fromRGB(255,80,80),false)
+    N("STOPPED","All auto tasks killed","square"); addLog("ALL STOPPED")
+end})
+AutoTab:CreateButton({Name="▶️  Restart Script Engine",Callback=function()
+    _G.RAVEN_ACTIVE=true; N("Engine","Restarted","play"); addLog("Engine restarted")
+end})
+
+-- ─── SETTINGS ────────────────────────────────────────────────
+local SetTab = Window:CreateTab("Settings","settings-2")
+SetTab:CreateSection("Alerts")
+local alertLbl=SetTab:CreateLabel("Auto Clear Alerts: Inactive.","bell-off",Color3.fromRGB(155,155,155),false)
+SetTab:CreateToggle({Name="Auto Clear Future Alerts  ✦ NEW",CurrentValue=false,Flag="AutoClearAlerts",
+    Callback=function(v)
+        S.autoClearAlerts=v
+        alertLbl:Set(v and "Status: Active — dismissing all alerts automatically." or "Status: Inactive.",
+            "bell-off",v and Color3.fromRGB(80,220,255) or Color3.fromRGB(155,155,155),false)
+        N("Alerts",v and "Auto Clear ON" or "OFF","bell-off")
+    end})
+SetTab:CreateButton({Name="🔇  Clear All Alerts Right Now",Callback=function()
+    local n=0
+    for _,g in ipairs(pGui:GetChildren()) do
+        local nm=g.Name:lower()
+        if nm:find("alert") or nm:find("popup") or nm:find("notif") then
+            pcall(function() g.Enabled=false end); n=n+1
+        end
+    end
+    N("Alerts","Cleared "..n.." alert GUIs","trash-2"); addLog("Cleared "..n.." alerts")
+end})
+SetTab:CreateSection("ESP")
+SetTab:CreateToggle({Name="Show Enemy Units in ESP",CurrentValue=true,Flag="ESPEnemy",
+    Callback=function(v) S.showEnemy=v end})
+SetTab:CreateToggle({Name="Enable Unit ESP",CurrentValue=false,Flag="ESPOn",
+    Callback=function(v)
+        S.espOn=v
+        if v then for _,u in ipairs(workspace.Units:GetChildren()) do applyTag(u) end
+        else clearAllTags() end
+        N("ESP",v and "ON" or "OFF",v and "eye" or "eye-off")
+    end})
+SetTab:CreateSection("Debug")
+SetTab:CreateToggle({Name="Debug Mode (console logging)",CurrentValue=true,Flag="DebugMode",
+    Callback=function(v) debugMode=v end})
+SetTab:CreateButton({Name="📋  Print Player Info",Callback=function()
+    local ls=dig(player,"leaderstats")
+    print("╔══════════════════════════════╗")
+    print("║  RAVEN HUB  —  "..player.Name)
+    print("║  Country: "..(getCountry() or "None"))
+    if ls then for _,s in ipairs(ls:GetChildren()) do
+        print(("║  %-14s %s"):format(s.Name..":",tostring(s.Value)))
+    end end
+    print("║  Cities: "..#getCities())
+    print("╚══════════════════════════════╝")
+    N("Info","Printed to F9","user")
+end})
+SetTab:CreateButton({Name="🌍  List All Countries In Server",Callback=function()
+    print("╔══════════════════════════════╗")
+    for _,p in ipairs(Players:GetPlayers()) do
+        local ls=dig(p,"leaderstats")
+        local c=ls and dig(ls,"Country") and dig(ls,"Country").Value or "?"
+        print(("║  %-20s %s"):format(p.Name,c))
+    end
+    print("╚══════════════════════════════╝")
+    N("Countries","Printed","globe")
+end})
+SetTab:CreateSection("About")
+SetTab:CreateParagraph({
+    Title   = "Raven Hub  v8.0",
+    Content = "Powered by Rayfield Interface Suite (sirius.menu/rayfield).\n\nToggle UI: RightControl\n\nFeatures: Tech War Spy panel • Auto Farm Phase 1→2 • Auto Military (Tanks, Infantry, Bombers, Aircraft) • Auto Construction • Smart Research • Best Laws • War Crime • Skin Changer • Auto Alliance / Puppet • Trading • ESP • Auto Clear Alerts\n\nAll remotes are pcall-wrapped. Script survives broken remotes."
+})
+
+-- ══════════════════════════════════════════════════════════════
+--  LOAD SAVED CONFIGURATION
+--  Must be called AFTER all elements are created
+-- ══════════════════════════════════════════════════════════════
+Rayfield:LoadConfiguration()
+
+-- ══════════════════════════════════════════════════════════════
+--  BACKGROUND LOOPS
+--  Rules: use task.wait() in while condition, no continue,
+--         no += operator, no global reads inside tight loops
+-- ══════════════════════════════════════════════════════════════
+
+-- Auto clear alerts
+task.spawn(function()
+    while task.wait(3) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoClearAlerts then
+            for _,g in ipairs(pGui:GetChildren()) do
+                local nm=g.Name:lower()
+                if nm:find("alert") or nm:find("popup") or nm:find("notif") then
+                    pcall(function() g.Enabled=false end)
+                end
+            end
+        end
+    end
+end)
+
+pGui.ChildAdded:Connect(function(g)
+    if S.autoClearAlerts then
+        local nm=g.Name:lower()
+        if nm:find("alert") or nm:find("popup") or nm:find("notif") then
+            task.wait(0.1); pcall(function() g.Enabled=false end)
+        end
+    end
+end)
+
+-- ESP refresh
+task.spawn(function()
+    while task.wait(S.espRate) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.espOn then
+            for _,u in ipairs(workspace.Units:GetChildren()) do
+                if u:FindFirstChild(TAG_ID) then refreshTag(u) else applyTag(u) end
+            end
+        end
+    end
+end)
+
+-- Auto mine
+task.spawn(function()
+    while task.wait(S.autoMineInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoMine or (S.autoFarm and S.farmPhase >= 1) then
+            for _,city in ipairs(getCities()) do
+                if not hasB(city,"Mine") then
+                    local res,ok=getRes(city),false
+                    for ore in pairs(ORE_SET) do if (res[ore] or 0)>=1 then ok=true; break end end
+                    if ok then fire(gm.CreateBuilding,{[1]=city},"Mines"); task.wait(0.2) end
+                end
+            end
+        end
+    end
+end)
+
+-- Auto construction
+task.spawn(function()
+    while task.wait(90) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoConst then
+            local eligible={}
+            for _,city in ipairs(getCities()) do
+                if not hasB(city,S.autoConstFactory) then eligible[#eligible+1]=city end
+            end
+            for i=#eligible,2,-1 do
+                local j=math.random(1,i); eligible[i],eligible[j]=eligible[j],eligible[i]
+            end
+            local built=0
+            for i=1,math.min(S.autoConstQty,#eligible) do
+                fire(gm.CreateBuilding,{[1]=eligible[i]},S.autoConstFactory)
+                built=built+1; task.wait(0.15)
+            end
+            if built>0 then
+                constLbl:Set("Status: Built "..built.." × "..S.autoConstFactory,"hammer",Color3.fromRGB(255,200,50),false)
+                addLog("AutoConst: "..built.." "..S.autoConstFactory)
+            end
+        end
+    end
+end)
+
+-- Auto factory + autofarm phase logic
+task.spawn(function()
+    while task.wait(S.autoFactInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoFactory or (S.autoFarm and S.farmPhase >= 1) then
+            local base   = {"Recruitment Center","Factory","Arms Factory","Research Lab"}
+            local expand = {"Recruitment Center","Factory","Arms Factory","Research Lab","Airport","Port","Nuclear Plant"}
+            local targets = (S.autoFarm and S.farmPhase >= 2) and expand or base
+            local allDone = true
+            for _,city in ipairs(getCities()) do
+                for _,b in ipairs(targets) do
+                    if not hasB(city,b) then
+                        allDone=false; fire(gm.CreateBuilding,{[1]=city},b); task.wait(0.15)
+                    end
+                end
+            end
+            -- Phase 1 → 2 transition
+            if S.autoFarm and S.farmPhase == 1 and allDone then
+                S.farmPhase=2; S.farmStatus="Economy Expansion"
+                farmStatusLbl:Set("Status: Phase 2 — Economy Expansion!","zap",Color3.fromRGB(80,255,130),false)
+                farmPhaseLbl:Set("Phase: 2 — Economy Expansion","layers",Color3.fromRGB(80,255,130),false)
+                addLog("AutoFarm → Phase 2")
+                N("AutoFarm 🚀","Phase 2 Unlocked — Economy Expansion!","zap")
+                task.spawn(function()
+                    for _,t in ipairs({"Low","Medium","High","Maximum"}) do
+                        pcall(function() gm.SetTaxLaw:FireServer(t) end); task.wait(0.3)
+                    end
+                    pcall(function() gm.SetConscription:FireServer("Total War") end)
+                    for i,cat in ipairs(TECH_CATS) do
+                        task.delay(i*0.5, function() pcall(function() gm.ResearchTech:FireServer(cat) end) end)
+                    end
+                end)
+            end
+        end
+    end
+end)
+
+-- Auto unit
+task.spawn(function()
+    while task.wait(S.autoUnitInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoUnit then
+            local req=UNIT_REQ[S.autoUnitType]; local cc={}
+            for _,city in ipairs(getCities()) do
+                if req then if hasB(city,req) then cc[#cc+1]=city end else cc[#cc+1]=city end
+            end
+            if #cc>0 then fire(gm.CreateUnit,{[1]=cc[math.random(1,#cc)]},S.autoUnitType) end
+        end
+        if S.autoFarm and S.farmPhase == 2 then
+            local cc=getCities()
+            if #cc>0 then
+                local land={"Infantry","Tank","Artillery","Anti Aircraft"}
+                fire(gm.CreateUnit,{[1]=cc[math.random(1,#cc)]},land[math.random(1,#land)])
+            end
+        end
+    end
+end)
+
+-- Auto sell / CG / buy
+task.spawn(function()
+    while task.wait(S.autoSellInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoSell then
+            local mode=S.aiOnly and "AI" or "All"
+            pcall(function() gm.TradeResource:FireServer(S.sellRes,-S.sellAmt,mode) end)
+        end
+        if S.autoFarm and S.farmPhase >= 1 then
+            pcall(function() gm.TradeResource:FireServer("Electronics",-5000,"AI") end)
+            task.wait(0.3)
+            pcall(function() gm.TradeResource:FireServer("Consumer Goods",-5000,"AI") end)
+        end
+        if S.autoCGSell then
+            local m = S.cgTarget=="AI Only" and "AI" or S.cgTarget=="Player Only" and "Players" or "All"
+            pcall(function() gm.TradeResource:FireServer("Consumer Goods",-1000,m) end)
+        end
+        if S.massBuyAI then
+            pcall(function() gm.TradeResource:FireServer(S.autoBuyType,5000,"AI") end)
+        end
+    end
+end)
+
+-- Auto ally
+task.spawn(function()
+    while task.wait(120) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoAlly then
+            for _,c in ipairs(allCountries()) do
+                if not S.allyT[c] then
+                    S.allyT[c]=true; fire(gm.ManageAlliance,c,"SendRequest"); task.wait(0.8)
+                end
+            end
+        end
+    end
+end)
+
+-- Auto puppet
+task.spawn(function()
+    while task.wait(180) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoPuppet then
+            for _,c in ipairs(allCountries()) do
+                if not S.puppetT[c] then
+                    S.puppetT[c]=true
+                    pcall(function() gm.ManagePuppet:FireServer(c,"SendRequest") end); task.wait(1)
+                end
+            end
+        end
+    end
+end)
+
+-- Auto declare war
+task.spawn(function()
+    while task.wait(30) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoDeclare then
+            local base=dig(workspace,"Baseplate","Cities")
+            if base then
+                for _,folder in ipairs(base:GetChildren()) do
+                    if folder.Name ~= getCountry() and #folder:GetChildren() > 0 then
+                        pcall(function() gm.ManageWar:FireServer(folder.Name,"Declare") end); task.wait(0.5)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- Auto bomber attack
+task.spawn(function()
+    while task.wait(20) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoBomber then
+            local ec=enemyCities()
+            if #ec>0 then
+                for _,u in ipairs(myUnits()) do
+                    local ut=dig(u,"Type")
+                    if ut and ut.Value=="Bomber" then
+                        local t=ec[math.random(1,#ec)]; local tp=t:FindFirstChildWhichIsA("BasePart")
+                        if tp then pcall(function() gm.MoveUnit:FireServer(u,tp.Position,"Attack") end) end
+                    end
+                end
+                bomberLbl:Set("Status: Bombing "..#ec.." enemy cities.","plane",Color3.fromRGB(255,200,50),false)
+            end
+        end
+    end
+end)
+
+-- Anti bomber spam
+task.spawn(function()
+    while task.wait(10) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.antiBomber then
+            local intercepted=0
+            for _,u in ipairs(enemyUnits()) do
+                local ut=dig(u,"Type")
+                if ut and ut.Value=="Bomber" then
+                    for _,mine in ipairs(myUnits()) do
+                        local mt=dig(mine,"Type")
+                        if mt and mt.Value=="Fighter" then
+                            local bp=u:FindFirstChildWhichIsA("BasePart")
+                            if bp then
+                                pcall(function() gm.MoveUnit:FireServer(mine,bp.Position,"Attack") end)
+                                intercepted=intercepted+1; break
+                            end
+                        end
+                    end
+                end
+            end
+            if intercepted>0 then
+                antiBomberLbl:Set("Status: Intercepting "..intercepted.." bomber(s).","shield",Color3.fromRGB(80,200,255),false)
+            end
+        end
+    end
+end)
+
+-- Auto aircraft creation
+task.spawn(function()
+    while task.wait(20) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoAircraft then
+            local airC={}
+            for _,c in ipairs(getCities()) do if hasB(c,"Airport") then airC[#airC+1]=c end end
+            if #airC>0 then
+                local counts={Attacker=0,Fighter=0,Bomber=0}
+                for _,u in ipairs(myUnits()) do
+                    local ut=dig(u,"Type")
+                    if ut and counts[ut.Value] ~= nil then counts[ut.Value]=counts[ut.Value]+1 end
+                end
+                local city=airC[math.random(1,#airC)]
+                if counts.Attacker < S.tgtAttacker then fire(gm.CreateUnit,{[1]=city},"Attacker"); task.wait(0.2) end
+                if counts.Fighter  < S.tgtFighter  then fire(gm.CreateUnit,{[1]=city},"Fighter");  task.wait(0.2) end
+                if counts.Bomber   < S.tgtBomber   then fire(gm.CreateUnit,{[1]=city},"Bomber");   task.wait(0.2) end
+                aircraftLbl:Set(
+                    ("Attacker:%d/%d  Fighter:%d/%d  Bomber:%d/%d"):format(
+                        counts.Attacker,S.tgtAttacker,counts.Fighter,S.tgtFighter,counts.Bomber,S.tgtBomber),
+                    "activity",Color3.fromRGB(150,220,255),false)
+            end
+        end
+    end
+end)
+
+-- Auto assign troops
+task.spawn(function()
+    while task.wait(25) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoAssign then
+            local army={}
+            for _,u in ipairs(myUnits()) do
+                local ut=dig(u,"Type")
+                if ut and (ut.Value=="Tank" or ut.Value=="Infantry") then army[#army+1]=u end
+            end
+            if #army >= 2 then
+                pcall(function() gm.GroupUnits:FireServer(army,"Army") end)
+                assignLbl:Set("Status: Grouped "..#army.." units into Army.","users",Color3.fromRGB(80,255,130),false)
+                addLog("Assigned "..#army.." to Army")
+            end
+        end
+    end
+end)
+
+-- War crime (burn captured cities)
+local capConn = nil
+task.spawn(function()
+    while task.wait(2) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.warCrime then
+            local cf=dig(workspace,"Baseplate","Cities",getCountry() or "__none__")
+            if cf and not capConn then
+                capConn = cf.ChildAdded:Connect(function(nc)
+                    if S.warCrime then
+                        task.wait(2); pcall(function() gm.BurnCity:FireServer(nc) end)
+                        warCrimeLbl:Set("Status: Burned "..nc.Name.."!","flame",Color3.fromRGB(255,80,50),false)
+                        addLog("WAR CRIME: burned "..nc.Name)
+                    end
+                end)
+            end
+        else
+            if capConn then capConn:Disconnect(); capConn=nil end
+        end
+    end
+end)
+
+-- Auto tank spawn
+task.spawn(function()
+    while task.wait(S.tankSpawnInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoTankSpawn then
+            local cc=getCities()
+            if #cc>0 then
+                for i=1,S.tankSpawnAmt do
+                    fire(gm.CreateUnit,{[1]=cc[((i-1)%#cc)+1]},"Tank"); task.wait(0.1)
+                end
+                tankLbl:Set("Status: Spawned "..S.tankSpawnAmt.." tanks.","crosshair",Color3.fromRGB(255,180,50),false)
+            end
+        end
+    end
+end)
+
+-- Auto tank attack
+task.spawn(function()
+    while task.wait(S.tankAtkInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoTankAtk then
+            local ec=enemyCities()
+            if #ec>0 then
+                local atk=0
+                for _,u in ipairs(myUnits()) do
+                    local ut=dig(u,"Type")
+                    if ut and ut.Value=="Tank" then
+                        local t=ec[math.random(1,#ec)]; local tp=t:FindFirstChildWhichIsA("BasePart")
+                        if tp then pcall(function() gm.MoveUnit:FireServer(u,tp.Position,"Capture") end); atk=atk+1 end
+                    end
+                end
+                if atk>0 then tankLbl:Set("Status: "..atk.." tanks capturing.","crosshair",Color3.fromRGB(255,120,50),false) end
+            end
+        end
+    end
+end)
+
+-- Auto infantry spawn
+task.spawn(function()
+    while task.wait(S.infSpawnInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoInfSpawn then
+            local cc=getCities()
+            if #cc>0 then
+                for i=1,S.infSpawnAmt do
+                    fire(gm.CreateUnit,{[1]=cc[((i-1)%#cc)+1]},"Infantry"); task.wait(0.1)
+                end
+                infLbl:Set("Status: Spawned "..S.infSpawnAmt.." infantry.","users",Color3.fromRGB(255,200,50),false)
+            end
+        end
+    end
+end)
+
+-- Auto infantry attack
+task.spawn(function()
+    while task.wait(S.infAtkInt) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.autoInfAtk then
+            local ec=enemyCities()
+            if #ec>0 then
+                local atk=0
+                for _,u in ipairs(myUnits()) do
+                    local ut=dig(u,"Type")
+                    if ut and ut.Value=="Infantry" then
+                        local t=ec[math.random(1,#ec)]; local tp=t:FindFirstChildWhichIsA("BasePart")
+                        if tp then pcall(function() gm.MoveUnit:FireServer(u,tp.Position,"Capture") end); atk=atk+1 end
+                    end
+                end
+                if atk>0 then infLbl:Set("Status: "..atk.." infantry capturing.","users",Color3.fromRGB(255,180,50),false) end
+            end
+        end
+    end
+end)
+
+-- Smart research
+task.spawn(function()
+    local rOrder={"Military","Industry","Economic","Air","Naval","Infrastructure","Recon","Nuclear"}
+    local idx=1
+    while task.wait(45) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.smartResearch then
+            local cat=rOrder[idx]
+            pcall(function() gm.ResearchTech:FireServer(cat) end)
+            smartResLbl:Set("Status: Researching "..cat.."...","flask-conical",Color3.fromRGB(80,200,255),false)
+            idx = (idx % #rOrder) + 1
+            addLog("Smart Research: "..cat)
+        end
+    end
+end)
+
+-- Spam justifications
+task.spawn(function()
+    while task.wait(60) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.spamJustif then
+            for _,c in ipairs(allCountries()) do
+                pcall(function() gm.AddJustification:FireServer(c,S.justifType) end); task.wait(0.5)
+            end
+        end
+    end
+end)
+
+-- Best law setup
+task.spawn(function()
+    while task.wait(15) do
+        if not _G.RAVEN_ACTIVE then break end
+        if S.bestLaws then
+            for _,l in ipairs({"Low","Medium","High","Maximum"}) do
+                pcall(function() gm.SetTaxLaw:FireServer(l) end); task.wait(0.5)
+            end
+            pcall(function() gm.SetConscription:FireServer("Total War") end); task.wait(0.5)
+            pcall(function() gm.SetPoliticalLaw:FireServer("Unique_Monarchy",2) end)
+            bestLawLbl:Set("Status: Laws enacted. Monitoring PP...","landmark",Color3.fromRGB(255,220,50),false)
+        end
+    end
+end)
+
+-- ══════════════════════════════════════════════════════════════
+--  DONE  —  notify player
+-- ══════════════════════════════════════════════════════════════
+addLog("Raven Hub v8.0 loaded — " .. (getCountry() or "No country yet"))
+
+N(
+    "Raven Hub v8.0  ✓",
+    #getCities() .. " cities found  •  RightControl to toggle",
+    "bird"
+)
