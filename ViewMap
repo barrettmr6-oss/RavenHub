@@ -1,0 +1,321 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ContentProvider = game:GetService("ContentProvider")
+local TweenService = game:GetService("TweenService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ============================================================
+-- COOL LOADING UI
+-- ============================================================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "MapLoaderUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+-- Dark overlay
+local overlay = Instance.new("Frame")
+overlay.Size = UDim2.new(1, 0, 1, 0)
+overlay.BackgroundColor3 = Color3.fromRGB(8, 8, 20)
+overlay.BackgroundTransparency = 0.15
+overlay.BorderSizePixel = 0
+overlay.Parent = screenGui
+
+-- Main card
+local card = Instance.new("Frame")
+card.Size = UDim2.new(0, 480, 0, 280)
+card.Position = UDim2.new(0.5, -240, 0.5, -140)
+card.BackgroundColor3 = Color3.fromRGB(12, 12, 30)
+card.BorderSizePixel = 0
+card.Parent = screenGui
+
+local cardCorner = Instance.new("UICorner")
+cardCorner.CornerRadius = UDim.new(0, 18)
+cardCorner.Parent = card
+
+local cardStroke = Instance.new("UIStroke")
+cardStroke.Color = Color3.fromRGB(80, 120, 255)
+cardStroke.Thickness = 2
+cardStroke.Parent = card
+
+-- Animated gradient on card
+local gradientFrame = Instance.new("Frame")
+gradientFrame.Size = UDim2.new(1, 0, 0, 4)
+gradientFrame.Position = UDim2.new(0, 0, 0, 0)
+gradientFrame.BackgroundColor3 = Color3.fromRGB(80, 120, 255)
+gradientFrame.BorderSizePixel = 0
+gradientFrame.Parent = card
+
+local topCorner = Instance.new("UICorner")
+topCorner.CornerRadius = UDim.new(0, 18)
+topCorner.Parent = gradientFrame
+
+local topGradient = Instance.new("UIGradient")
+topGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 120, 255)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(160, 80, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(80, 200, 255)),
+})
+topGradient.Parent = gradientFrame
+
+-- Icon / spinner area
+local spinnerContainer = Instance.new("Frame")
+spinnerContainer.Size = UDim2.new(0, 60, 0, 60)
+spinnerContainer.Position = UDim2.new(0.5, -30, 0, 24)
+spinnerContainer.BackgroundTransparency = 1
+spinnerContainer.Parent = card
+
+local spinner = Instance.new("ImageLabel")
+spinner.Size = UDim2.new(1, 0, 1, 0)
+spinner.BackgroundTransparency = 1
+spinner.Image = "rbxassetid://6034684949" -- circle ring asset
+spinner.ImageColor3 = Color3.fromRGB(100, 140, 255)
+spinner.Parent = spinnerContainer
+
+-- Title
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 0, 36)
+title.Position = UDim2.new(0, 20, 0, 92)
+title.BackgroundTransparency = 1
+title.Text = "🗺️  MAP LOADER"
+title.TextColor3 = Color3.fromRGB(220, 230, 255)
+title.TextSize = 22
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Center
+title.Parent = card
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -40, 0, 24)
+statusLabel.Position = UDim2.new(0, 20, 0, 132)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Initialising..."
+statusLabel.TextColor3 = Color3.fromRGB(140, 160, 220)
+statusLabel.TextSize = 14
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Center
+statusLabel.Parent = card
+
+-- Progress bar background
+local barBg = Instance.new("Frame")
+barBg.Size = UDim2.new(1, -60, 0, 12)
+barBg.Position = UDim2.new(0, 30, 0, 168)
+barBg.BackgroundColor3 = Color3.fromRGB(30, 30, 60)
+barBg.BorderSizePixel = 0
+barBg.Parent = card
+
+local barBgCorner = Instance.new("UICorner")
+barBgCorner.CornerRadius = UDim.new(1, 0)
+barBgCorner.Parent = barBg
+
+-- Progress bar fill
+local barFill = Instance.new("Frame")
+barFill.Size = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(80, 120, 255)
+barFill.BorderSizePixel = 0
+barFill.Parent = barBg
+
+local barFillCorner = Instance.new("UICorner")
+barFillCorner.CornerRadius = UDim.new(1, 0)
+barFillCorner.Parent = barFill
+
+local barGradient = Instance.new("UIGradient")
+barGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 120, 255)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(160, 80, 255)),
+})
+barGradient.Parent = barFill
+
+-- Percentage label
+local pctLabel = Instance.new("TextLabel")
+pctLabel.Size = UDim2.new(1, -40, 0, 20)
+pctLabel.Position = UDim2.new(0, 20, 0, 188)
+pctLabel.BackgroundTransparency = 1
+pctLabel.Text = "0%"
+pctLabel.TextColor3 = Color3.fromRGB(100, 130, 200)
+pctLabel.TextSize = 13
+pctLabel.Font = Enum.Font.GothamMedium
+pctLabel.TextXAlignment = Enum.TextXAlignment.Center
+pctLabel.Parent = card
+
+-- Notification toast
+local toast = Instance.new("Frame")
+toast.Size = UDim2.new(0, 340, 0, 48)
+toast.Position = UDim2.new(0.5, -170, 1, 20) -- starts off screen
+toast.BackgroundColor3 = Color3.fromRGB(20, 20, 45)
+toast.BorderSizePixel = 0
+toast.Parent = screenGui
+
+local toastCorner = Instance.new("UICorner")
+toastCorner.CornerRadius = UDim.new(0, 12)
+toastCorner.Parent = toast
+
+local toastStroke = Instance.new("UIStroke")
+toastStroke.Color = Color3.fromRGB(80, 120, 255)
+toastStroke.Thickness = 1.5
+toastStroke.Parent = toast
+
+local toastLabel = Instance.new("TextLabel")
+toastLabel.Size = UDim2.new(1, -20, 1, 0)
+toastLabel.Position = UDim2.new(0, 10, 0, 0)
+toastLabel.BackgroundTransparency = 1
+toastLabel.Text = ""
+toastLabel.TextColor3 = Color3.fromRGB(200, 215, 255)
+toastLabel.TextSize = 14
+toastLabel.Font = Enum.Font.Gotham
+toastLabel.TextXAlignment = Enum.TextXAlignment.Center
+toastLabel.Parent = toast
+
+-- ============================================================
+-- HELPERS
+-- ============================================================
+
+local function setProgress(pct, status)
+    statusLabel.Text = status or statusLabel.Text
+    pctLabel.Text = math.floor(pct) .. "%"
+    TweenService:Create(barFill, TweenInfo.new(0.4, Enum.EasingStyle.Quart), {
+        Size = UDim2.new(pct / 100, 0, 1, 0)
+    }):Play()
+end
+
+local function showToast(msg, color)
+    toastLabel.Text = msg
+    toastStroke.Color = color or Color3.fromRGB(80, 120, 255)
+    local slideIn = TweenService:Create(toast, TweenInfo.new(0.4, Enum.EasingStyle.Back), {
+        Position = UDim2.new(0.5, -170, 1, -70)
+    })
+    slideIn:Play()
+    task.delay(2.5, function()
+        TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+            Position = UDim2.new(0.5, -170, 1, 20)
+        }):Play()
+    end)
+end
+
+-- Spin the spinner
+local spinAngle = 0
+RunService.Heartbeat:Connect(function(dt)
+    spinAngle = spinAngle + dt * 180
+    spinner.Rotation = spinAngle
+    -- Pulse the card stroke
+    local t = tick()
+    cardStroke.Color = Color3.fromHSV((t * 0.1) % 1, 0.6, 1)
+end)
+
+-- ============================================================
+-- MAP LOADING LOGIC
+-- ============================================================
+
+local function collectAllParts()
+    local parts = {}
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation")
+            or obj:IsA("SpecialMesh") or obj:IsA("Decal") or obj:IsA("Texture") then
+            table.insert(parts, obj)
+        end
+    end
+    return parts
+end
+
+local function preloadAll(parts)
+    local total = #parts
+    if total == 0 then return end
+
+    local loaded = 0
+    local batchSize = 20
+
+    for i = 1, total, batchSize do
+        local batch = {}
+        for j = i, math.min(i + batchSize - 1, total) do
+            table.insert(batch, parts[j])
+        end
+
+        ContentProvider:PreloadAsync(batch)
+        loaded = loaded + #batch
+
+        local pct = 30 + (loaded / total) * 60  -- 30–90%
+        setProgress(pct, "Loading assets... (" .. loaded .. "/" .. total .. ")")
+        task.wait()
+    end
+end
+
+local function sweepLoadMap()
+    -- Find map bounds
+    local minPos = Vector3.new(math.huge, math.huge, math.huge)
+    local maxPos = Vector3.new(-math.huge, -math.huge, -math.huge)
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local p = obj.Position
+            minPos = Vector3.new(math.min(minPos.X, p.X), math.min(minPos.Y, p.Y), math.min(minPos.Z, p.Z))
+            maxPos = Vector3.new(math.max(maxPos.X, p.X), math.max(maxPos.Y, p.Y), math.max(maxPos.Z, p.Z))
+        end
+    end
+
+    local camera = workspace.CurrentCamera
+    local prevCFrame = camera.CFrame
+    local centerY = (minPos.Y + maxPos.Y) / 2 + 300
+
+    local steps = 6
+    local total = (steps + 1) * (steps + 1)
+    local done = 0
+
+    setProgress(10, "Scanning map boundaries...")
+    showToast("📡  Scanning map... please wait")
+
+    for i = 0, steps do
+        for j = 0, steps do
+            local x = minPos.X + (maxPos.X - minPos.X) * (i / steps)
+            local z = minPos.Z + (maxPos.Z - minZ) * (j / steps)
+            camera.CFrame = CFrame.new(Vector3.new(x, centerY, z), Vector3.new(x, centerY - 1, z))
+            done = done + 1
+            setProgress(10 + (done / total) * 20, "Sweeping map sector " .. done .. "/" .. total)
+            task.wait(0.05)
+        end
+    end
+
+    camera.CFrame = prevCFrame
+end
+
+-- ============================================================
+-- MAIN
+-- ============================================================
+
+task.spawn(function()
+    task.wait(1)
+
+    setProgress(0, "Starting up...")
+    showToast("🚀  Map Loader activated!")
+    task.wait(1)
+
+    -- Step 1: Sweep
+    sweepLoadMap()
+    showToast("✅  Sweep complete!", Color3.fromRGB(80, 220, 120))
+    task.wait(0.5)
+
+    -- Step 2: Preload assets
+    setProgress(30, "Collecting assets...")
+    local parts = collectAllParts()
+    showToast("📦  Found " .. #parts .. " assets to load")
+    task.wait(0.5)
+
+    preloadAll(parts)
+
+    -- Step 3: Done!
+    setProgress(100, "Map fully loaded!")
+    showToast("🎉  Everything loaded!", Color3.fromRGB(80, 220, 120))
+
+    -- Animate card out
+    task.wait(1.5)
+    TweenService:Create(card, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+        Position = UDim2.new(0.5, -240, 1.5, 0)
+    }):Play()
+    TweenService:Create(overlay, TweenInfo.new(0.5), {
+        BackgroundTransparency = 1
+    }):Play()
+    task.wait(0.6)
+    screenGui:Destroy()
+end)
